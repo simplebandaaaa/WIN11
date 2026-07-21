@@ -9,43 +9,45 @@ jobs:
     - name: Checkout Code
       uses: actions/checkout@v3
 
-    - name: Install Desktop and VNC Components
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y xfce4 xfce4-goodies tightvncserver websockify jq novnc
-
     - name: Connect to Tailscale
       uses: tailscale/github-action@v2
       with:
         authkey: ${{ secrets.TAILSCALE_AUTH_KEY }}
 
-    - name: Start VNC Server and Web Proxy
+    - name: Setup Kernel Modules for Android
       run: |
-        # VNC सर्वर सेटअप (पासवर्ड: 123456)
-        mkdir -p ~/.vnc
-        echo "123456" | vncpasswd -f > ~/.vnc/passwd
-        chmod 600 ~/.vnc/passwd
-        tightvncserver :1 -geometry 1280x720 -depth 24
-        
-        # noVNC प्रॉक्सी को 6080 पोर्ट पर बैकग्राउंड में चालू करना
-        /usr/share/novnc/utils/launch.sh --vnc localhost:5901 --listen 6080 &
+        # एंड्रॉइड के लिए ज़रूरी कर्नल सेटिंग्स
+        sudo modprobe binder_linux devices="binder,hwbinder,vndbinder"
+        sudo modprobe ashmem_linux || true
 
-    - name: Start Lightweight Android via Docker
+    - name: Run Redroid and Web-Scrcpy
       run: |
-        # भारी एमुलेटर की जगह नो-HUD वाला फास्ट एंड्रॉइड रन करना
-        docker run -d \
-          --privileged \
-          --name=android-container \
-          -p 5554:5554 -p 5555:5555 \
-          budtmo/docker-android:emulator_11.0
+        # 1. एकदम लाइटवेट सुपर-फ़ास्ट एंड्रॉइड 11 चालू करें
+        docker run -d --privileged \
+          --name redroid \
+          --net=host \
+          redroid/redroid:11.0.0-latest \
+          androidboot.redroid_width=720 \
+          androidboot.redroid_height=1280 \
+          androidboot.redroid_dpi=320
 
-    - name: Get Tailscale IP and Keep Alive
+        # 2. थोड़ा रुकें ताकि एंड्रॉइड अंदर से बूट हो जाए
+        sleep 15
+
+        # 3. सीधे ब्राउज़र में स्क्रीन दिखाने वाला वेब-इंटरफेस (WebRTC) चालू करें
+        docker run -d --privileged \
+          --name web-scrcpy \
+          --net=host \
+          -e ADB_SERVER_SOCKET=tcp:localhost:5037 \
+          -v /var/run/docker.sock:/var/run/docker.sock \
+          allanpk7u/scrcpy-web:latest
+
+    - name: Keep Alive
       run: |
         echo "========================================================"
-        echo "आपका सिक्योर रिमोट क्लाउड फोन रेडी है!"
-        echo "नीचे दिए गए IP एड्रेस को नोट करें:"
+        echo "अब बिना किसी VNC के, सीधा ब्राउज़र-बेस्ड क्लाउड फोन रेडी है!"
         tailscale ip -4
         echo "========================================================"
-        echo "अब अपने ब्राउज़र में खोलें: http://[आपका-Tailscale-IP]:6080/vnc.html"
+        echo "अपने ब्राउज़र में खोलें: http://[आपका-Tailscale-IP]:8000"
         echo "========================================================"
         sleep 21600
