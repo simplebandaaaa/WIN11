@@ -9,35 +9,43 @@ jobs:
     - name: Checkout Code
       uses: actions/checkout@v3
 
-    - name: Install System Dependencies
+    - name: Install Desktop and VNC Components
       run: |
         sudo apt-get update
-        sudo apt-get install -y tightvncserver websockify jq dbus-x11 x11-xserver-utils
+        sudo apt-get install -y xfce4 xfce4-goodies tightvncserver websockify jq novnc
 
     - name: Connect to Tailscale
       uses: tailscale/github-action@v2
       with:
         authkey: ${{ secrets.TAILSCALE_AUTH_KEY }}
 
-    - name: Start Android Emulator via Docker
+    - name: Start VNC Server and Web Proxy
       run: |
-        # होस्ट नेटवर्क मोड और प्रिविलेज्ड राइट्स के साथ ताकि सीधे 6080 पोर्ट एक्सेस हो सके
+        # VNC सर्वर सेटअप (पासवर्ड: 123456)
+        mkdir -p ~/.vnc
+        echo "123456" | vncpasswd -f > ~/.vnc/passwd
+        chmod 600 ~/.vnc/passwd
+        tightvncserver :1 -geometry 1280x720 -depth 24
+        
+        # noVNC प्रॉक्सी को 6080 पोर्ट पर बैकग्राउंड में चालू करना
+        /usr/share/novnc/utils/launch.sh --vnc localhost:5901 --listen 6080 &
+
+    - name: Start Lightweight Android via Docker
+      run: |
+        # भारी एमुलेटर की जगह नो-HUD वाला फास्ट एंड्रॉइड रन करना
         docker run -d \
-          --net=host \
           --privileged \
-          --device /dev/kvm \
-          -e EMULATOR_DEVICE="Nexus 5X" \
-          -e WEB_HUD=true \
+          --name=android-container \
+          -p 5554:5554 -p 5555:5555 \
           budtmo/docker-android:emulator_11.0
 
     - name: Get Tailscale IP and Keep Alive
       run: |
         echo "========================================================"
-        echo "आपका क्लाउड फोन आपके प्राइवेट Tailscale नेटवर्क पर लाइव है!"
+        echo "आपका सिक्योर रिमोट क्लाउड फोन रेडी है!"
         echo "नीचे दिए गए IP एड्रेस को नोट करें:"
         tailscale ip -4
         echo "========================================================"
-        echo "अब अपने ब्राउज़र में खोलें: http://[आपका-Tailscale-IP]:6080"
+        echo "अब अपने ब्राउज़र में खोलें: http://[आपका-Tailscale-IP]:6080/vnc.html"
         echo "========================================================"
-        # 6 घंटे तक लाइव रखने के लिए
         sleep 21600
