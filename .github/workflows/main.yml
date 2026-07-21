@@ -1,0 +1,37 @@
+name: CI-Cloud-Phone-Tailscale
+
+on: workflow_dispatch
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v3
+
+    - name: Install VNC and Docker
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y tightvncserver websockify jq
+
+    - name: Connect to Tailscale
+      uses: tailscale/github-action@v2
+      with:
+        authkey: ${{ secrets.TAILSCALE_AUTH_KEY }}
+
+    - name: Start Android Emulator via Docker
+      run: |
+        # KVM इनेबल्ड एंड्रॉइड कंटेनर (Android 11) बैकग्राउंड में चलाना
+        docker run -d -p 6080:6080 -p 5554:5554 -p 5555:5555 --device /dev/kvm budtmo/docker-android:emulator_11.0
+
+    - name: Get Tailscale IP and Keep Alive
+      run: |
+        echo "========================================================"
+        echo "आपका क्लाउड फोन आपके प्राइवेट Tailscale नेटवर्क पर लाइव है!"
+        echo "नीचे दिए गए IP एड्रेस को नोट करें:"
+        tailscale ip -4
+        echo "========================================================"
+        echo "अब अपने ब्राउज़र में खोलें: http://[आपका-Tailscale-IP]:6080"
+        echo "========================================================"
+        # 6 घंटे तक लाइव रखने के लिए
+        sleep 21600
