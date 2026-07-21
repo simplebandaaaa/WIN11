@@ -14,31 +14,32 @@ jobs:
       with:
         authkey: ${{ secrets.TAILSCALE_AUTH_KEY }}
 
-    - name: Start Android Container
+    - name: Setup Ultralight LXDE Desktop & VNC
       run: |
-        # KVM इनेबल्ड एंड्रॉइड 11 कंटेनर को 6080 पोर्ट पर रन करना
-        docker run -d \
-          --name=android-container \
-          --privileged \
-          --device /dev/kvm \
-          -p 6080:6080 \
-          -e EMULATOR_DEVICE="Nexus 5X" \
-          -e WEB_HUD=true \
-          budtmo/docker-android:emulator_11.0
-
-    - name: Wait for Android Boot and Keep Alive
-      run: |
-        echo "========================================================"
-        echo "एंड्रॉइड सिस्टम बैकग्राउंड में बूट हो रहा है..."
-        echo "इसे पूरी तरह चालू होने में 2 से 3 मिनट का समय लगेगा।"
-        echo "========================================================"
+        sudo apt-get update
+        # एकदम हल्का डेस्कटॉप और टाइटवीएनसी इंस्टॉल करना
+        sudo apt-get install -y lxde tightvncserver novnc websockify jq
         
-        # Tailscale IP प्रिंट करना
-        echo "आपका Tailscale IP एड्रेस यह है:"
+        # VNC का पासवर्ड सेट करना (123456)
+        mkdir -p ~/.vnc
+        echo "123456" | vncpasswd -f > ~/.vnc/passwd
+        chmod 600 ~/.vnc/passwd
+        
+        # VNC सर्वर को डिस्प्ले :1 पर 6080 पोर्ट के लिए रेडी करना
+        tightvncserver :1 -geometry 1280x720 -depth 24
+        
+        # noVNC वेब प्रॉक्सी को बैकग्राउंड में 6080 पोर्ट पर रन करना
+        /usr/share/novnc/utils/launch.sh --vnc localhost:5901 --listen 6080 &
+
+    - name: Print Connection Details & Keep Alive
+      run: |
+        echo "========================================================"
+        echo "सुपर लाइटवेट क्लाउड डेस्कटॉप तुरंत लाइव हो गया है!"
+        echo "========================================================"
+        echo "आपका Tailscale IP एड्रेस:"
         tailscale ip -4
         echo "========================================================"
-        echo "अपने ब्राउज़र में खोलें: http://[आपका-Tailscale-IP]:6080"
+        echo "अपने मोबाइल ब्राउज़र में खोलें (हुबहू यही लिंक):"
+        echo "http://[आपका-Tailscale-IP]:6080/vnc.html"
         echo "========================================================"
-        
-        # 6 घंटे तक सेशन को लाइव रखने के लिए
         sleep 21600
