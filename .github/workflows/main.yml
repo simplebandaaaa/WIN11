@@ -17,7 +17,6 @@ jobs:
     - name: Setup Ultralight LXDE Desktop & VNC
       run: |
         sudo apt-get update
-        # एकदम हल्का डेस्कटॉप और टाइटवीएनसी इंस्टॉल करना
         sudo apt-get install -y lxde tightvncserver novnc websockify jq
         
         # VNC का पासवर्ड सेट करना (123456)
@@ -25,21 +24,21 @@ jobs:
         echo "123456" | vncpasswd -f > ~/.vnc/passwd
         chmod 600 ~/.vnc/passwd
         
-        # VNC सर्वर को डिस्प्ले :1 पर 6080 पोर्ट के लिए रेडी करना
+        # VNC सर्वर चालू करना
         tightvncserver :1 -geometry 1280x720 -depth 24
         
-        # noVNC वेब प्रॉक्सी को बैकग्राउंड में 6080 पोर्ट पर रन करना
-        /usr/share/novnc/utils/launch.sh --vnc localhost:5901 --listen 6080 &
+        # नो-VNC का नया और बिल्कुल सही पाथ (Ubuntu 22.04+ के लिए)
+        /usr/bin/novnc_proxy --vnc localhost:5901 --listen 6080 &
 
     - name: Print Connection Details & Keep Alive
       run: |
         echo "========================================================"
-        echo "सुपर लाइटवेट क्लाउड डेस्कटॉप तुरंत लाइव हो गया है!"
+        echo "सुपर लाइटवेट क्लाउड डेस्कटॉप अब 100% लाइव है!"
         echo "========================================================"
         echo "आपका Tailscale IP एड्रेस:"
         tailscale ip -4
         echo "========================================================"
         echo "अपने मोबाइल ब्राउज़र में खोलें (हुबहू यही लिंक):"
-        echo "http://[आपका-Tailscale-IP]:6080/vnc.html"
+        echo "http://100.88.182.75:6080/vnc.html"
         echo "========================================================"
         sleep 21600
