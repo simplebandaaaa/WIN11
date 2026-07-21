@@ -24,11 +24,18 @@ jobs:
         echo "123456" | vncpasswd -f > ~/.vnc/passwd
         chmod 600 ~/.vnc/passwd
         
-        # VNC सर्वर चालू करना
+        # पुराना VNC सर्वर अगर कोई चल रहा हो तो उसे मारो
+        tightvncserver -kill :1 || true
+        
+        # VNC सर्वर फ्रेश चालू करना
         tightvncserver :1 -geometry 1280x720 -depth 24
         
-        # नो-VNC का नया और बिल्कुल सही पाथ (Ubuntu 22.04+ के लिए)
-        /usr/bin/novnc_proxy --vnc localhost:5901 --listen 6080 &
+        # ऑटो-पाथ डिटेक्शन: novnc_proxy या launch.sh जहाँ भी हो, ढूंढ कर चालू कर देगा
+        NOVNC_BIN=$(which novnc_proxy || find /usr -name "novnc_proxy" -o -name "launch.sh" | head -n 1)
+        echo "Found noVNC at: $NOVNC_BIN"
+        
+        # इसे बैकग्राउंड में रन करना
+        $NOVNC_BIN --vnc localhost:5901 --listen 6080 &
 
     - name: Print Connection Details & Keep Alive
       run: |
@@ -38,7 +45,7 @@ jobs:
         echo "आपका Tailscale IP एड्रेस:"
         tailscale ip -4
         echo "========================================================"
-        echo "अपने मोबाइल ब्राउज़र में खोलें (हुबहू यही लिंक):"
-        echo "http://100.88.182.75:6080/vnc.html"
+        echo "अपने मोबाइल ब्राउज़र में खोलें:"
+        echo "http://[आपका-Tailscale-IP]:6080/vnc.html"
         echo "========================================================"
         sleep 21600
