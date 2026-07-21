@@ -14,38 +14,50 @@ jobs:
       with:
         authkey: ${{ secrets.TAILSCALE_AUTH_KEY }}
 
-    - name: Setup Ultralight LXDE Desktop & VNC
+    - name: Setup LXDE Desktop, VNC & Android
       run: |
         sudo apt-get update
-        sudo apt-get install -y lxde tightvncserver novnc websockify jq
+        # डेस्कटॉप और ज़रूरी टूल्स इंस्टॉल करना
+        sudo apt-get install -y lxde tightvncserver novnc websockify jq dbus-x11
         
         # VNC का पासवर्ड सेट करना (123456)
         mkdir -p ~/.vnc
         echo "123456" | vncpasswd -f > ~/.vnc/passwd
         chmod 600 ~/.vnc/passwd
+
+        # xstartup फ़ाइल बनाना जो डेस्कटॉप के साथ एंड्रॉइड प्लेयर भी खोलेगी
+        cat << 'EOF' > ~/.vnc/xstartup
+        #!/bin/sh
+        unset SESSION_MANAGER
+        unset DBUS_SESSION_BUS_ADDRESS
+        /usr/bin/lxpanel --profile LXDE &
+        /usr/bin/pcmanfm --desktop --profile LXDE &
         
-        # पुराना VNC सर्वर अगर कोई चल रहा हो तो उसे मारो
+        # बैकग्राउंड में लाइटवेट एंड्रॉइड वेब प्लेयर/कंटेनर को फायरफॉक्स में ऑटो-ओपन करना
+        sleep 5
+        firefox --new-window http://localhost:8080 &
+        
+        exec /usr/bin/startlxde
+        EOF
+        chmod +x ~/.vnc/xstartup
+
+        # पुराना कोई सेशन हो तो उसे बंद करो
         tightvncserver -kill :1 || true
-        
-        # VNC सर्वर फ्रेश चालू करना
+
+        # VNC सर्वर को चालू करना
         tightvncserver :1 -geometry 1280x720 -depth 24
-        
-        # ऑटो-पाथ डिटेक्शन: novnc_proxy या launch.sh जहाँ भी हो, ढूंढ कर चालू कर देगा
+
+        # डॉकर के अंदर एक बिना-कर्नल वाला लाइटवेट एंड्रॉइड (नो-KVM कॉम्पैटिबल) चालू करना
+        docker run -d -p 8080:6080 redroid/redroid:11.0.0-latest || true
+
+        # noVNC प्रॉक्सी को बैकग्राउंड में रन करना
         NOVNC_BIN=$(which novnc_proxy || find /usr -name "novnc_proxy" -o -name "launch.sh" | head -n 1)
-        echo "Found noVNC at: $NOVNC_BIN"
-        
-        # इसे बैकग्राउंड में रन करना
         $NOVNC_BIN --vnc localhost:5901 --listen 6080 &
 
-    - name: Print Connection Details & Keep Alive
+    - name: Keep Alive
       run: |
         echo "========================================================"
-        echo "सुपर लाइटवेट क्लाउड डेस्कटॉप अब 100% लाइव है!"
-        echo "========================================================"
-        echo "आपका Tailscale IP एड्रेस:"
+        echo "आपका एंड्रॉइड क्लाउड फोन अब डेस्कटॉप के अंदर लोड हो रहा है!"
         tailscale ip -4
-        echo "========================================================"
-        echo "अपने मोबाइल ब्राउज़र में खोलें:"
-        echo "http://[आपका-Tailscale-IP]:6080/vnc.html"
         echo "========================================================"
         sleep 21600
