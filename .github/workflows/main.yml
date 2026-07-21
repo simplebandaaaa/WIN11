@@ -9,10 +9,10 @@ jobs:
     - name: Checkout Code
       uses: actions/checkout@v3
 
-    - name: Install VNC and Docker
+    - name: Install System Dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y tightvncserver websockify jq
+        sudo apt-get install -y tightvncserver websockify jq dbus-x11 x11-xserver-utils
 
     - name: Connect to Tailscale
       uses: tailscale/github-action@v2
@@ -21,8 +21,14 @@ jobs:
 
     - name: Start Android Emulator via Docker
       run: |
-        # KVM इनेबल्ड एंड्रॉइड कंटेनर (Android 11) बैकग्राउंड में चलाना
-        docker run -d -p 6080:6080 -p 5554:5554 -p 5555:5555 --device /dev/kvm budtmo/docker-android:emulator_11.0
+        # होस्ट नेटवर्क मोड और प्रिविलेज्ड राइट्स के साथ ताकि सीधे 6080 पोर्ट एक्सेस हो सके
+        docker run -d \
+          --net=host \
+          --privileged \
+          --device /dev/kvm \
+          -e EMULATOR_DEVICE="Nexus 5X" \
+          -e WEB_HUD=true \
+          budtmo/docker-android:emulator_11.0
 
     - name: Get Tailscale IP and Keep Alive
       run: |
