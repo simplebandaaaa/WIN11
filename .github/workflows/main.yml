@@ -14,40 +14,31 @@ jobs:
       with:
         authkey: ${{ secrets.TAILSCALE_AUTH_KEY }}
 
-    - name: Setup Kernel Modules for Android
+    - name: Start Android Container
       run: |
-        # एंड्रॉइड के लिए ज़रूरी कर्नल सेटिंग्स
-        sudo modprobe binder_linux devices="binder,hwbinder,vndbinder"
-        sudo modprobe ashmem_linux || true
+        # KVM इनेबल्ड एंड्रॉइड 11 कंटेनर को 6080 पोर्ट पर रन करना
+        docker run -d \
+          --name=android-container \
+          --privileged \
+          --device /dev/kvm \
+          -p 6080:6080 \
+          -e EMULATOR_DEVICE="Nexus 5X" \
+          -e WEB_HUD=true \
+          budtmo/docker-android:emulator_11.0
 
-    - name: Run Redroid and Web-Scrcpy
-      run: |
-        # 1. एकदम लाइटवेट सुपर-फ़ास्ट एंड्रॉइड 11 चालू करें
-        docker run -d --privileged \
-          --name redroid \
-          --net=host \
-          redroid/redroid:11.0.0-latest \
-          androidboot.redroid_width=720 \
-          androidboot.redroid_height=1280 \
-          androidboot.redroid_dpi=320
-
-        # 2. थोड़ा रुकें ताकि एंड्रॉइड अंदर से बूट हो जाए
-        sleep 15
-
-        # 3. सीधे ब्राउज़र में स्क्रीन दिखाने वाला वेब-इंटरफेस (WebRTC) चालू करें
-        docker run -d --privileged \
-          --name web-scrcpy \
-          --net=host \
-          -e ADB_SERVER_SOCKET=tcp:localhost:5037 \
-          -v /var/run/docker.sock:/var/run/docker.sock \
-          allanpk7u/scrcpy-web:latest
-
-    - name: Keep Alive
+    - name: Wait for Android Boot and Keep Alive
       run: |
         echo "========================================================"
-        echo "अब बिना किसी VNC के, सीधा ब्राउज़र-बेस्ड क्लाउड फोन रेडी है!"
+        echo "एंड्रॉइड सिस्टम बैकग्राउंड में बूट हो रहा है..."
+        echo "इसे पूरी तरह चालू होने में 2 से 3 मिनट का समय लगेगा।"
+        echo "========================================================"
+        
+        # Tailscale IP प्रिंट करना
+        echo "आपका Tailscale IP एड्रेस यह है:"
         tailscale ip -4
         echo "========================================================"
-        echo "अपने ब्राउज़र में खोलें: http://[आपका-Tailscale-IP]:8000"
+        echo "अपने ब्राउज़र में खोलें: http://[आपका-Tailscale-IP]:6080"
         echo "========================================================"
+        
+        # 6 घंटे तक सेशन को लाइव रखने के लिए
         sleep 21600
