@@ -1,61 +1,53 @@
 $ErrorActionPreference = "Stop"
 
 Write-Host "=============================================="
-Write-Host " Android Emulator Setup"
-Write-Host " Android 8.0 / API 26"
-Write-Host " Google APIs / x86"
-Write-Host " ADB DISABLED"
+Write-Host " Android Emulator + Browser Setup"
 Write-Host "=============================================="
 
 # ============================================================
-# 1. FIND ANDROID SDK
+# VARIABLES
 # ============================================================
 
-$possibleSdkPaths = @(
-    $env:ANDROID_SDK_ROOT,
-    $env:ANDROID_HOME,
-    "C:\Android\android-sdk",
-    "C:\Android\Sdk",
-    "$env:LOCALAPPDATA\Android\Sdk"
-)
-
-$Sdk = $null
-
-foreach ($path in $possibleSdkPaths) {
-
-    if (-not [string]::IsNullOrWhiteSpace($path)) {
-
-        if (Test-Path $path) {
-            $Sdk = $path
-            break
-        }
-    }
-}
-
-if (-not $Sdk) {
-    throw "Android SDK was not found."
-}
+$Sdk = "C:\Android\android-sdk"
 
 $env:ANDROID_HOME = $Sdk
 $env:ANDROID_SDK_ROOT = $Sdk
 
-Write-Host ""
-Write-Host "Android SDK:"
-Write-Host $Sdk
+$env:ANDROID_AVD_HOME = "$env:USERPROFILE\.android\avd"
+
+$AvdName = "Android26"
+
+$SystemImage = "system-images;android-26;google_apis;x86"
+
+$WebPort = 8000
+
+$BrowserApp = "$env:USERPROFILE\ws-scrcpy-web"
 
 # ============================================================
-# 2. FIND SDKMANAGER
+# CREATE SDK DIRECTORY
+# ============================================================
+
+if (-not (Test-Path $Sdk)) {
+
+    New-Item `
+        -ItemType Directory `
+        -Path $Sdk `
+        -Force | Out-Null
+}
+
+# ============================================================
+# FIND SDKMANAGER
 # ============================================================
 
 $sdkmanager = $null
 
-$sdkmanagerCandidates = @(
+$candidates = @(
     "$Sdk\cmdline-tools\latest\bin\sdkmanager.bat",
     "$Sdk\cmdline-tools\bin\sdkmanager.bat",
     "$Sdk\tools\bin\sdkmanager.bat"
 )
 
-foreach ($candidate in $sdkmanagerCandidates) {
+foreach ($candidate in $candidates) {
 
     if (Test-Path $candidate) {
         $sdkmanager = $candidate
@@ -78,7 +70,7 @@ if (-not $sdkmanager) {
 }
 
 if (-not $sdkmanager) {
-    throw "sdkmanager.bat was not found."
+    throw "sdkmanager.bat not found."
 }
 
 Write-Host ""
@@ -86,10 +78,11 @@ Write-Host "SDK Manager:"
 Write-Host $sdkmanager
 
 # ============================================================
-# 3. INSTALL REQUIRED ANDROID COMPONENTS
+# INSTALL SDK COMPONENTS
 # ============================================================
-# platform-tools intentionally NOT installed.
-# Therefore ADB is NOT installed by this script.
+# IMPORTANT:
+# platform-tools is now intentionally installed because
+# browser-based emulator control requires ADB.
 
 Write-Host ""
 Write-Host "=============================================="
@@ -97,6 +90,7 @@ Write-Host " Installing Android Components"
 Write-Host "=============================================="
 
 $packages = @(
+    "platform-tools",
     "emulator",
     "platforms;android-26",
     "system-images;android-26;google_apis;x86"
@@ -111,37 +105,36 @@ foreach ($package in $packages) {
     & $sdkmanager $package
 
     if ($LASTEXITCODE -ne 0) {
-        throw "Failed to install package: $package"
+        throw "Failed installing $package"
     }
 }
 
 # ============================================================
-# 4. FIND EMULATOR
+# ACCEPT LICENSES
 # ============================================================
-
-$emulator = "$Sdk\emulator\emulator.exe"
-
-if (-not (Test-Path $emulator)) {
-    throw "emulator.exe was not found."
-}
 
 Write-Host ""
-Write-Host "Emulator:"
-Write-Host $emulator
+Write-Host "Accepting Android SDK licenses..."
+
+$yes = ("y`n" * 30)
+
+$yes |
+    & $sdkmanager --licenses |
+    Out-Host
 
 # ============================================================
-# 5. FIND AVDMANAGER
+# LOCATE AVD MANAGER
 # ============================================================
 
 $avdmanager = $null
 
-$avdmanagerCandidates = @(
+$candidates = @(
     "$Sdk\cmdline-tools\latest\bin\avdmanager.bat",
     "$Sdk\cmdline-tools\bin\avdmanager.bat",
     "$Sdk\tools\bin\avdmanager.bat"
 )
 
-foreach ($candidate in $avdmanagerCandidates) {
+foreach ($candidate in $candidates) {
 
     if (Test-Path $candidate) {
         $avdmanager = $candidate
@@ -164,7 +157,7 @@ if (-not $avdmanager) {
 }
 
 if (-not $avdmanager) {
-    throw "avdmanager.bat was not found."
+    throw "avdmanager.bat not found."
 }
 
 Write-Host ""
@@ -172,148 +165,102 @@ Write-Host "AVD Manager:"
 Write-Host $avdmanager
 
 # ============================================================
-# 6. AVD DIRECTORY
-# ============================================================
-
-$androidHome = "$env:USERPROFILE\.android"
-$avdRoot = "$androidHome\avd"
-
-if (-not (Test-Path $androidHome)) {
-
-    New-Item `
-        -ItemType Directory `
-        -Path $androidHome `
-        -Force | Out-Null
-}
-
-if (-not (Test-Path $avdRoot)) {
-
-    New-Item `
-        -ItemType Directory `
-        -Path $avdRoot `
-        -Force | Out-Null
-}
-
-$env:ANDROID_AVD_HOME = $avdRoot
-
-Write-Host ""
-Write-Host "AVD directory:"
-Write-Host $avdRoot
-
-# ============================================================
-# 7. FIND HARDWARE PROFILE
+# FIND HARDWARE PROFILE
 # ============================================================
 
 Write-Host ""
-Write-Host "Finding Android hardware profiles..."
+Write-Host "Finding hardware profile..."
 
 $deviceOutput = & $avdmanager list device 2>&1
 
-$deviceName = $null
+$DeviceName = $null
 
-# Prefer Pixel
-$pixelLine = $deviceOutput |
-    Where-Object {
-        $_ -match "pixel"
-    } |
-    Select-Object -First 1
-
-if ($pixelLine) {
-    $deviceName = "pixel"
+if ($deviceOutput -match "(?im)^\s*id:\s*pixel\b") {
+    $DeviceName = "pixel"
 }
 
-# Fallback
-if (-not $deviceName) {
+if (-not $DeviceName) {
 
-    $fallbackProfiles = @(
+    foreach ($fallback in @(
         "Nexus 5",
         "Nexus 5X",
         "Nexus 6P",
         "Nexus 7"
-    )
+    )) {
 
-    foreach ($profile in $fallbackProfiles) {
+        if ($deviceOutput -match [regex]::Escape($fallback)) {
 
-        if ($deviceOutput -match [regex]::Escape($profile)) {
-
-            $deviceName = $profile
+            $DeviceName = $fallback
             break
         }
     }
 }
 
-if (-not $deviceName) {
-    throw "No suitable Android hardware profile was found."
+if (-not $DeviceName) {
+    throw "No suitable Android phone hardware profile found."
 }
 
 Write-Host ""
-Write-Host "Selected hardware profile:"
-Write-Host $deviceName
+Write-Host "Selected:"
+Write-Host $DeviceName
 
 # ============================================================
-# 8. REMOVE OLD AVD
+# AVD DIRECTORY
+# ============================================================
+
+$AvdRoot = $env:ANDROID_AVD_HOME
+
+if (-not (Test-Path $AvdRoot)) {
+
+    New-Item `
+        -ItemType Directory `
+        -Path $AvdRoot `
+        -Force | Out-Null
+}
+
+$AvdDir = "$AvdRoot\$AvdName.avd"
+
+$AvdIni = "$AvdRoot\$AvdName.ini"
+
+# ============================================================
+# REMOVE OLD AVD
 # ============================================================
 
 Write-Host ""
-Write-Host "Checking existing Android26 AVD..."
+Write-Host "Checking existing Android26..."
 
-$existingAvds = & $avdmanager list avd 2>$null
+$existing = & $avdmanager list avd 2>$null
 
-if ($existingAvds -match "Name:\s*Android26") {
+if ($existing -match "Name:\s*$AvdName") {
 
-    Write-Host "Existing Android26 found."
-    Write-Host "Removing old AVD..."
+    Write-Host "Removing old Android26..."
 
-    try {
-
-        & $avdmanager `
-            delete `
-            avd `
-            -n "Android26" `
-            2>$null
-
-    }
-    catch {
-
-        Write-Host "Old AVD removal returned an error."
-        Write-Host "Continuing..."
-    }
-
-}
-else {
-
-    Write-Host "No previous Android26 AVD found."
+    & $avdmanager `
+        delete `
+        avd `
+        -n $AvdName `
+        2>$null
 }
 
-# ============================================================
-# 9. REMOVE LEFTOVER AVD FILES
-# ============================================================
-
-$oldAvdDirectory = "$avdRoot\Android26.avd"
-$oldIni = "$avdRoot\Android26.ini"
-
-if (Test-Path $oldAvdDirectory) {
-
-    Write-Host ""
-    Write-Host "Removing leftover AVD directory..."
+if (Test-Path $AvdDir) {
 
     Remove-Item `
-        -Path $oldAvdDirectory `
+        -Path $AvdDir `
         -Recurse `
         -Force `
         -ErrorAction SilentlyContinue
 }
 
-if (Test-Path $oldIni) {
+if (Test-Path $AvdIni) {
 
     Remove-Item `
-        -Path $oldIni `
+        -Path $AvdIni `
         -Force `
         -ErrorAction SilentlyContinue
 }
 
 # ============================================================
-# 10. CREATE AVD
+# CREATE AVD
 # ============================================================
 
 Write-Host ""
@@ -321,189 +268,125 @@ Write-Host "=============================================="
 Write-Host " Creating Android26 AVD"
 Write-Host "=============================================="
 
-$systemImage = "system-images;android-26;google_apis;x86"
-
-Write-Host ""
-Write-Host "System image:"
-Write-Host $systemImage
-
-Write-Host ""
-Write-Host "Hardware profile:"
-Write-Host $deviceName
-
-# IMPORTANT:
-# --device supplies the hardware profile.
-# This prevents avdmanager from asking:
-# "Do you wish to create a custom hardware profile?"
-#
-# No "no" is piped into avdmanager.
-
-$createArguments = @(
+$createArgs = @(
     "create",
     "avd",
     "-n",
-    "Android26",
+    $AvdName,
     "-k",
-    $systemImage,
+    $SystemImage,
     "-d",
-    $deviceName,
+    $DeviceName,
     "--force"
 )
 
-Write-Host ""
-Write-Host "Creating AVD..."
-
-& $avdmanager @createArguments
+& $avdmanager @createArgs
 
 if ($LASTEXITCODE -ne 0) {
-    throw "Failed to create Android26 AVD. Exit code: $LASTEXITCODE"
+    throw "Android26 AVD creation failed."
 }
 
 Write-Host ""
 Write-Host "Android26 AVD created successfully."
 
 # ============================================================
-# 11. VERIFY AVD BY FILES
+# VERIFY BY ACTUAL FILES
 # ============================================================
-# We do NOT rely only on text matching from:
-# avdmanager list avd
-#
-# The previous script failed here even though Android26
-# actually existed. We therefore verify the actual AVD files.
 
 Write-Host ""
-Write-Host "=============================================="
-Write-Host " Verifying Android26 AVD"
-Write-Host "=============================================="
+Write-Host "Verifying AVD..."
 
-$avdDirectory = "$avdRoot\Android26.avd"
-$avdConfig = "$avdDirectory\config.ini"
-$avdIni = "$avdRoot\Android26.ini"
-
-if (Test-Path $avdDirectory) {
-
-    Write-Host ""
-    Write-Host "Android26 AVD directory found:"
-    Write-Host $avdDirectory
-
-}
-else {
-
-    throw "Android26 AVD directory was not created."
+if (-not (Test-Path $AvdDir)) {
+    throw "Android26 AVD directory missing."
 }
 
-if (Test-Path $avdConfig) {
-
-    Write-Host ""
-    Write-Host "Android26 config.ini found."
-
-}
-else {
-
-    throw "Android26 config.ini was not found."
-}
-
-if (Test-Path $avdIni) {
-
-    Write-Host ""
-    Write-Host "Android26.ini found."
-
-}
-else {
-
-    Write-Host ""
-    Write-Host "Android26.ini not found."
-    Write-Host "Continuing because the AVD directory and config exist."
+if (-not (Test-Path "$AvdDir\config.ini")) {
+    throw "Android26 config.ini missing."
 }
 
 Write-Host ""
 Write-Host "Android26 AVD verified successfully."
 
 # ============================================================
-# 12. SHOW AVD INFORMATION
+# CONFIGURE AVD
 # ============================================================
+
+$config = "$AvdDir\config.ini"
+
+$content = Get-Content `
+    -Path $config `
+    -ErrorAction SilentlyContinue
+
+$settings = @{
+    "hw.ramSize"                  = "1536"
+    "vm.heapSize"                 = "256"
+    "hw.cpu.ncore"                = "2"
+    "hw.gpu.enabled"              = "yes"
+    "hw.gpu.mode"                 = "swiftshader_indirect"
+    "hw.camera.back"              = "none"
+    "hw.camera.front"             = "none"
+    "showDeviceFrame"             = "no"
+    "skin.dynamic"                = "no"
+    "fastboot.forceColdBoot"      = "yes"
+    "disk.dataPartition.size"     = "2048M"
+    "hw.lcd.width"                = "600"
+    "hw.lcd.height"               = "960"
+    "hw.lcd.density"              = "240"
+}
+
+foreach ($key in $settings.Keys) {
+
+    $value = $settings[$key]
+
+    $pattern = "^$([regex]::Escape($key))="
+
+    if ($content -match $pattern) {
+
+        $content = $content -replace `
+            $pattern, `
+            "$key=$value"
+
+    }
+    else {
+
+        $content += "$key=$value"
+    }
+}
+
+Set-Content `
+    -Path $config `
+    -Value $content `
+    -Encoding ASCII
 
 Write-Host ""
-Write-Host "AVD information:"
-
-$verifyOutput = & $avdmanager list avd 2>&1
-
-$verifyOutput | ForEach-Object {
-    Write-Host $_
-}
+Write-Host "600p-class emulator configuration applied."
 
 # ============================================================
-# 13. LIGHTWEIGHT CONFIGURATION
+# FIND EMULATOR
 # ============================================================
 
-Write-Host ""
-Write-Host "=============================================="
-Write-Host " Applying Lightweight Configuration"
-Write-Host "=============================================="
-
-if (Test-Path $avdConfig) {
-
-    $settings = @{
-        "hw.ramSize" = "1536"
-        "vm.heapSize" = "256"
-        "hw.cpu.ncore" = "2"
-        "hw.gpu.enabled" = "yes"
-        "hw.gpu.mode" = "swiftshader_indirect"
-        "hw.camera.back" = "none"
-        "hw.camera.front" = "none"
-        "disk.dataPartition.size" = "2048M"
-        "showDeviceFrame" = "no"
-        "skin.dynamic" = "no"
-        "fastboot.forceColdBoot" = "yes"
-    }
-
-    $content = Get-Content `
-        -Path $avdConfig `
-        -ErrorAction SilentlyContinue
-
-    foreach ($key in $settings.Keys) {
-
-        $value = $settings[$key]
-
-        $pattern = "^$([regex]::Escape($key))="
-
-        if ($content -match $pattern) {
-
-            $content = $content -replace `
-                $pattern, `
-                "$key=$value"
-
-        }
-        else {
-
-            $content += "$key=$value"
-        }
-    }
-
-    Set-Content `
-        -Path $avdConfig `
-        -Value $content `
-        -Encoding ASCII
-
-    Write-Host ""
-    Write-Host "Lightweight configuration applied."
-
-}
-else {
-
-    throw "Cannot configure AVD because config.ini is missing."
-}
-
-# ============================================================
-# 14. VERIFY EMULATOR EXECUTABLE
-# ============================================================
+$emulator = "$Sdk\emulator\emulator.exe"
 
 if (-not (Test-Path $emulator)) {
-    throw "Emulator executable disappeared or is unavailable."
+    throw "emulator.exe not found."
 }
 
 # ============================================================
-# 15. START EMULATOR
+# FIND ADB
+# ============================================================
+
+$adb = "$Sdk\platform-tools\adb.exe"
+
+if (-not (Test-Path $adb)) {
+    throw "adb.exe not found."
+}
+
+Write-Host ""
+Write-Host "ADB:"
+Write-Host $adb
+
+# ============================================================
+# START EMULATOR
 # ============================================================
 
 Write-Host ""
@@ -511,9 +394,9 @@ Write-Host "=============================================="
 Write-Host " Starting Android Emulator"
 Write-Host "=============================================="
 
-$emulatorArguments = @(
+$emuArgs = @(
     "-avd",
-    "Android26",
+    $AvdName,
     "-no-snapshot",
     "-no-boot-anim",
     "-no-audio",
@@ -530,113 +413,373 @@ $emulatorArguments = @(
     "-no-metrics"
 )
 
-Write-Host ""
-Write-Host "Launching emulator..."
-
-$emulatorProcess = Start-Process `
+$emuProcess = Start-Process `
     -FilePath $emulator `
-    -ArgumentList $emulatorArguments `
-    -WindowStyle Hidden `
+    -ArgumentList $emuArgs `
+    -WindowStyle Normal `
     -PassThru
 
-if (-not $emulatorProcess) {
-    throw "Failed to start emulator process."
-}
-
 Write-Host ""
-Write-Host "Emulator process started."
-Write-Host "PID:"
-Write-Host $emulatorProcess.Id
+Write-Host "Emulator PID:"
+Write-Host $emuProcess.Id
 
 # ============================================================
-# 16. WAIT FOR EMULATOR PROCESS
+# WAIT FOR ADB DEVICE
 # ============================================================
 
 Write-Host ""
-Write-Host "Waiting for emulator process..."
+Write-Host "Waiting for Android Emulator..."
 
-$running = $false
+$deviceReady = $false
 
-for ($i = 1; $i -le 60; $i++) {
+for ($i = 1; $i -le 120; $i++) {
 
     Start-Sleep -Seconds 2
 
-    $process = Get-Process `
-        -Id $emulatorProcess.Id `
-        -ErrorAction SilentlyContinue
+    $devices = & $adb devices 2>$null
 
-    if ($process) {
+    if ($devices -match "emulator-\d+\s+device") {
 
-        $running = $true
+        $deviceReady = $true
 
         Write-Host ""
-        Write-Host "Emulator process is running."
+        Write-Host "Android Emulator detected."
+
         break
     }
 
-    Write-Host "Waiting... $i/60"
+    Write-Host "Waiting for emulator... $i/120"
+}
+
+if (-not $deviceReady) {
+    throw "Android Emulator did not become available through ADB."
 }
 
 # ============================================================
-# 17. FINAL STATUS
+# WAIT FOR ANDROID BOOT
+# ============================================================
+
+Write-Host ""
+Write-Host "Waiting for Android boot..."
+
+$booted = $false
+
+for ($i = 1; $i -le 120; $i++) {
+
+    Start-Sleep -Seconds 2
+
+    $boot = & $adb shell getprop sys.boot_completed 2>$null
+
+    if ($boot -match "1") {
+
+        $booted = $true
+
+        Write-Host ""
+        Write-Host "Android boot completed."
+
+        break
+    }
+
+    Write-Host "Booting... $i/120"
+}
+
+if (-not $booted) {
+    throw "Android did not finish booting."
+}
+
+# ============================================================
+# WAIT FOR UI
+# ============================================================
+
+Start-Sleep -Seconds 5
+
+# ============================================================
+# DOWNLOAD WS-SCRCPY-WEB
 # ============================================================
 
 Write-Host ""
 Write-Host "=============================================="
+Write-Host " Installing Browser Emulator"
+Write-Host "=============================================="
 
-if ($running) {
+if (Test-Path $BrowserApp) {
 
-    Write-Host " ANDROID EMULATOR READY"
-    Write-Host "=============================================="
+    Write-Host "Removing previous ws-scrcpy-web..."
+
+    Remove-Item `
+        -Path $BrowserApp `
+        -Recurse `
+        -Force `
+        -ErrorAction SilentlyContinue
+}
+
+New-Item `
+    -ItemType Directory `
+    -Path $BrowserApp `
+    -Force | Out-Null
+
+$apiUrl = "https://api.github.com/repos/bilbospocketses/ws-scrcpy-web/releases/latest"
+
+Write-Host ""
+Write-Host "Checking latest ws-scrcpy-web release..."
+
+$headers = @{
+    "User-Agent" = "GitHub-Actions-Windows-Android-Emulator"
+    "Accept" = "application/vnd.github+json"
+}
+
+$release = Invoke-RestMethod `
+    -Uri $apiUrl `
+    -Headers $headers `
+    -Method Get
+
+if (-not $release.assets) {
+    throw "No ws-scrcpy-web release assets found."
+}
+
+# Prefer Windows portable ZIP.
+$asset = $release.assets |
+    Where-Object {
+        $_.name -match "(?i)windows|win" -and
+        $_.name -match "(?i)portable|zip" -and
+        $_.name -match "(?i)\.zip$"
+    } |
+    Select-Object -First 1
+
+# Fallback to any Windows ZIP.
+if (-not $asset) {
+
+    $asset = $release.assets |
+        Where-Object {
+            $_.name -match "(?i)win" -and
+            $_.name -match "(?i)\.zip$"
+        } |
+        Select-Object -First 1
+}
+
+if (-not $asset) {
+
+    $assetNames = ($release.assets |
+        Select-Object -ExpandProperty name) -join ", "
+
+    throw "Windows portable ZIP was not found. Assets: $assetNames"
+}
+
+Write-Host ""
+Write-Host "Selected browser package:"
+Write-Host $asset.name
+
+$zipFile = "$env:TEMP\ws-scrcpy-web.zip"
+
+Invoke-WebRequest `
+    -Uri $asset.browser_download_url `
+    -OutFile $zipFile `
+    -UseBasicParsing
+
+Write-Host ""
+Write-Host "Extracting browser package..."
+
+Expand-Archive `
+    -Path $zipFile `
+    -DestinationPath $BrowserApp `
+    -Force
+
+Remove-Item `
+    -Path $zipFile `
+    -Force `
+    -ErrorAction SilentlyContinue
+
+# ============================================================
+# FIND START.CMD
+# ============================================================
+
+$startCmd = Get-ChildItem `
+    -Path $BrowserApp `
+    -Filter "start.cmd" `
+    -Recurse `
+    -ErrorAction SilentlyContinue |
+    Select-Object -First 1
+
+if (-not $startCmd) {
+    throw "ws-scrcpy-web start.cmd was not found after extraction."
+}
+
+Write-Host ""
+Write-Host "Browser server launcher:"
+Write-Host $startCmd.FullName
+
+# ============================================================
+# START BROWSER SERVER
+# ============================================================
+
+Write-Host ""
+Write-Host "Starting ws-scrcpy-web..."
+
+$env:WS_SCRCPY_PORT = "$WebPort"
+
+# Start server from its own directory.
+$serverProcess = Start-Process `
+    -FilePath $startCmd.FullName `
+    -WorkingDirectory $startCmd.DirectoryName `
+    -WindowStyle Hidden `
+    -PassThru
+
+Write-Host ""
+Write-Host "Browser server PID:"
+Write-Host $serverProcess.Id
+
+# ============================================================
+# WAIT FOR LOCALHOST:8000
+# ============================================================
+
+Write-Host ""
+Write-Host "Waiting for browser server..."
+
+$webReady = $false
+
+for ($i = 1; $i -le 90; $i++) {
+
+    Start-Sleep -Seconds 2
+
+    try {
+
+        $tcp = Test-NetConnection `
+            -ComputerName "127.0.0.1" `
+            -Port $WebPort `
+            -WarningAction SilentlyContinue
+
+        if ($tcp.TcpTestSucceeded) {
+
+            $webReady = $true
+            break
+        }
+
+    }
+    catch {
+    }
+
+    Write-Host "Waiting for localhost:$WebPort ... $i/90"
+}
+
+if (-not $webReady) {
 
     Write-Host ""
-    Write-Host "AVD:"
-    Write-Host "Android26"
+    Write-Host "Browser server did not open port $WebPort."
+
+    throw "ws-scrcpy-web failed to start."
+}
+
+# ============================================================
+# OPEN CHROME
+# ============================================================
+
+Write-Host ""
+Write-Host "Opening Chrome/Edge..."
+
+$chromePaths = @(
+    "$env:ProgramFiles\Google\Chrome\Application\chrome.exe",
+    "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe",
+    "$env:LOCALAPPDATA\Google\Chrome\Application\chrome.exe"
+)
+
+$browser = $null
+
+foreach ($path in $chromePaths) {
+
+    if (Test-Path $path) {
+
+        $browser = $path
+        break
+    }
+}
+
+if (-not $browser) {
+
+    $edgePaths = @(
+        "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe",
+        "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe"
+    )
+
+    foreach ($path in $edgePaths) {
+
+        if (Test-Path $path) {
+
+            $browser = $path
+            break
+        }
+    }
+}
+
+if ($browser) {
+
+    Start-Process `
+        -FilePath $browser `
+        -ArgumentList "http://localhost:$WebPort"
 
     Write-Host ""
-    Write-Host "Android:"
-    Write-Host "Android 8.0 / API 26"
-
-    Write-Host ""
-    Write-Host "System image:"
-    Write-Host "Google APIs / x86"
-
-    Write-Host ""
-    Write-Host "Hardware:"
-    Write-Host $deviceName
-
-    Write-Host ""
-    Write-Host "RAM:"
-    Write-Host "1536 MB"
-
-    Write-Host ""
-    Write-Host "CPU:"
-    Write-Host "2 cores"
-
-    Write-Host ""
-    Write-Host "GPU:"
-    Write-Host "SwiftShader"
-
-    Write-Host ""
-    Write-Host "ADB:"
-    Write-Host "NOT INSTALLED"
-
-    Write-Host ""
-    Write-Host "RDP:"
-    Write-Host "Windows RDP"
+    Write-Host "Browser opened."
 
 }
 else {
 
     Write-Host ""
-    Write-Host "=============================================="
-    Write-Host " EMULATOR DID NOT START"
-    Write-Host "=============================================="
-
-    throw "Android emulator process exited before becoming available."
+    Write-Host "Chrome/Edge executable was not found."
+    Write-Host "Open this manually:"
+    Write-Host "http://localhost:$WebPort"
 }
+
+# ============================================================
+# FINAL STATUS
+# ============================================================
 
 Write-Host ""
 Write-Host "=============================================="
-Write-Host " Android Emulator setup completed"
+Write-Host " ANDROID BROWSER EMULATOR READY"
+Write-Host "=============================================="
+
+Write-Host ""
+Write-Host "Android:"
+Write-Host "Android 8.0 / API 26"
+
+Write-Host ""
+Write-Host "ABI:"
+Write-Host "x86"
+
+Write-Host ""
+Write-Host "Resolution:"
+Write-Host "600p-class"
+
+Write-Host ""
+Write-Host "Target:"
+Write-Host "30 FPS / low-data"
+
+Write-Host ""
+Write-Host "Audio:"
+Write-Host "OFF"
+
+Write-Host ""
+Write-Host "Camera:"
+Write-Host "OFF"
+
+Write-Host ""
+Write-Host "Fullscreen:"
+Write-Host "OFF"
+
+Write-Host ""
+Write-Host "Control:"
+Write-Host "Touch + Mouse + Keyboard"
+
+Write-Host ""
+Write-Host "Browser:"
+Write-Host "Chrome / Edge"
+
+Write-Host ""
+Write-Host "URL:"
+Write-Host "http://localhost:8000"
+
+Write-Host ""
+Write-Host "ADB:"
+Write-Host "ENABLED for browser bridge"
+
+Write-Host ""
 Write-Host "=============================================="
