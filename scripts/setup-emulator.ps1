@@ -91,24 +91,48 @@ Write-Host $sdkmanager
 Write-Host ""
 Write-Host "Accepting Android SDK licenses..."
 
-$licenseInput = @()
+$licenseText = ""
 
 for ($i = 0; $i -lt 100; $i++) {
-    $licenseInput += "y"
+    $licenseText += "y`r`n"
 }
 
-$licenseInput |
-    & $sdkmanager --licenses 2>$null
+$psiLicense = New-Object System.Diagnostics.ProcessStartInfo
+
+$psiLicense.FileName = $sdkmanager
+$psiLicense.Arguments = "--licenses"
+$psiLicense.UseShellExecute = $false
+$psiLicense.RedirectStandardInput = $true
+$psiLicense.RedirectStandardOutput = $true
+$psiLicense.RedirectStandardError = $true
+$psiLicense.CreateNoWindow = $true
+
+$licenseProcess = New-Object System.Diagnostics.Process
+$licenseProcess.StartInfo = $psiLicense
+
+[void]$licenseProcess.Start()
+
+$licenseProcess.StandardInput.Write($licenseText)
+$licenseProcess.StandardInput.Close()
+
+$licenseOut = $licenseProcess.StandardOutput.ReadToEnd()
+$licenseErr = $licenseProcess.StandardError.ReadToEnd()
+
+$licenseProcess.WaitForExit()
+
+Write-Host $licenseOut
 
 # ============================================================
-# 4. INSTALL ONLY REQUIRED COMPONENTS
+# 4. INSTALL REQUIRED COMPONENTS
 # ============================================================
 # IMPORTANT:
 # platform-tools is intentionally NOT installed.
 # Therefore ADB is NOT installed.
 
 Write-Host ""
-Write-Host "Installing Android Emulator components..."
+Write-Host "=============================================="
+Write-Host " Installing Emulator Components"
+Write-Host "=============================================="
 
 $packages = @(
     "emulator",
@@ -125,7 +149,7 @@ foreach ($package in $packages) {
     & $sdkmanager $package
 
     if ($LASTEXITCODE -ne 0) {
-        Write-Warning "sdkmanager returned exit code $LASTEXITCODE for $package"
+        throw "Failed to install package: $package"
     }
 }
 
@@ -215,7 +239,7 @@ Write-Host "AVD directory:"
 Write-Host $avdRoot
 
 # ============================================================
-# 8. CHECK EXISTING AVD
+# 8. CHECK AND REMOVE OLD AVD
 # ============================================================
 
 Write-Host ""
@@ -225,8 +249,8 @@ $existingAvds = & $avdmanager list avd 2>$null
 
 if ($existingAvds -match "Android26") {
 
-    Write-Host "Existing Android26 AVD found."
-    Write-Host "Removing old AVD..."
+    Write-Host "Existing Android26 found."
+    Write-Host "Removing old Android26..."
 
     try {
 
@@ -239,26 +263,28 @@ if ($existingAvds -match "Android26") {
     }
     catch {
 
-        Write-Host "Old AVD could not be deleted. Continuing..."
+        Write-Host "Old AVD removal returned an error."
+        Write-Host "Continuing anyway..."
     }
 
 }
 else {
 
     Write-Host "No previous Android26 AVD found."
-    Write-Host "This is a fresh installation."
+    Write-Host "Fresh AVD will be created."
 }
 
 # ============================================================
-# 9. REMOVE OLD CONFIG DIRECTORY IF STILL PRESENT
+# 9. REMOVE LEFTOVER FILES
 # ============================================================
 
 $oldAvdDirectory = "$avdRoot\Android26.avd"
+$oldIni = "$avdRoot\Android26.ini"
 
 if (Test-Path $oldAvdDirectory) {
 
     Write-Host ""
-    Write-Host "Removing leftover AVD files..."
+    Write-Host "Removing leftover AVD directory..."
 
     Remove-Item `
         -Path $oldAvdDirectory `
@@ -266,8 +292,6 @@ if (Test-Path $oldAvdDirectory) {
         -Force `
         -ErrorAction SilentlyContinue
 }
-
-$oldIni = "$avdRoot\Android26.ini"
 
 if (Test-Path $oldIni) {
 
@@ -278,7 +302,7 @@ if (Test-Path $oldIni) {
 }
 
 # ============================================================
-# 10. CREATE NEW API 26 AVD
+# 10. CREATE AVD
 # ============================================================
 
 Write-Host ""
@@ -288,29 +312,63 @@ Write-Host "=============================================="
 
 $systemImage = "system-images;android-26;google_apis;x86"
 
-$createOutput = @(
-    "no"
-) | & $avdmanager `
-    create `
-    avd `
-    -n "Android26" `
-    -k $systemImage `
-    --force 2>&1
+# ------------------------------------------------------------
+# IMPORTANT:
+# Do not pipe a PowerShell array containing "no".
+# That can introduce an invisible BOM character:
+#
+# Error: ﻿no is not a valid reply
+#
+# Instead start avdmanager directly and send clean ASCII
+# "no" through StandardInput.
+# ------------------------------------------------------------
 
-$createOutput | ForEach-Object {
-    Write-Host $_
+$psi = New-Object System.Diagnostics.ProcessStartInfo
+
+$psi.FileName = $avdmanager
+$psi.Arguments = "create avd -n Android26 -k `"$systemImage`" --force"
+$psi.UseShellExecute = $false
+$psi.RedirectStandardInput = $true
+$psi.RedirectStandardOutput = $true
+$psi.RedirectStandardError = $true
+$psi.CreateNoWindow = $true
+
+$avdProcess = New-Object System.Diagnostics.Process
+$avdProcess.StartInfo = $psi
+
+[void]$avdProcess.Start()
+
+# Clean ASCII response
+$avdProcess.StandardInput.Write("no")
+$avdProcess.StandardInput.Write([Environment]::NewLine)
+$avdProcess.StandardInput.Close()
+
+$avdStdOut = $avdProcess.StandardOutput.ReadToEnd()
+$avdStdErr = $avdProcess.StandardError.ReadToEnd()
+
+$avdProcess.WaitForExit()
+
+if (-not [string]::IsNullOrWhiteSpace($avdStdOut)) {
+    Write-Host $avdStdOut
 }
 
-if ($LASTEXITCODE -ne 0) {
-    throw "Failed to create Android26 AVD."
+if (-not [string]::IsNullOrWhiteSpace($avdStdErr)) {
+    Write-Host $avdStdErr
 }
+
+if ($avdProcess.ExitCode -ne 0) {
+    throw "Failed to create Android26 AVD. Exit code: $($avdProcess.ExitCode)"
+}
+
+Write-Host ""
+Write-Host "Android26 AVD creation command completed."
 
 # ============================================================
 # 11. VERIFY AVD
 # ============================================================
 
 Write-Host ""
-Write-Host "Verifying AVD..."
+Write-Host "Verifying Android26 AVD..."
 
 $verifyAvds = & $avdmanager list avd 2>&1
 
@@ -319,8 +377,11 @@ $verifyAvds | ForEach-Object {
 }
 
 if ($verifyAvds -notmatch "Android26") {
-    throw "Android26 AVD was not created successfully."
+    throw "Android26 AVD was not found after creation."
 }
+
+Write-Host ""
+Write-Host "Android26 AVD verified successfully."
 
 # ============================================================
 # 12. CONFIGURE LIGHTWEIGHT AVD
@@ -331,7 +392,9 @@ $config = "$avdRoot\Android26.avd\config.ini"
 if (Test-Path $config) {
 
     Write-Host ""
-    Write-Host "Applying lightweight configuration..."
+    Write-Host "=============================================="
+    Write-Host " Applying Lightweight Configuration"
+    Write-Host "=============================================="
 
     $settings = @{
         "hw.ramSize" = "1536"
@@ -347,15 +410,14 @@ if (Test-Path $config) {
         "fastboot.forceColdBoot" = "yes"
     }
 
+    $content = Get-Content `
+        -Path $config `
+        -ErrorAction SilentlyContinue
+
     foreach ($key in $settings.Keys) {
 
         $value = $settings[$key]
-
         $pattern = "^$([regex]::Escape($key))="
-
-        $content = Get-Content `
-            -Path $config `
-            -ErrorAction SilentlyContinue
 
         if ($content -match $pattern) {
 
@@ -363,18 +425,17 @@ if (Test-Path $config) {
                 $pattern, `
                 "$key=$value"
 
-            Set-Content `
-                -Path $config `
-                -Value $content
-
         }
         else {
 
-            Add-Content `
-                -Path $config `
-                -Value "$key=$value"
+            $content += "$key=$value"
         }
     }
+
+    Set-Content `
+        -Path $config `
+        -Value $content `
+        -Encoding ASCII
 }
 
 # ============================================================
@@ -391,7 +452,6 @@ $emulatorArguments = @(
     "-no-snapshot",
     "-no-boot-anim",
     "-no-audio",
-    "-no-boot-anim",
     "-camera-back", "none",
     "-camera-front", "none",
     "-gpu", "swiftshader_indirect",
@@ -408,15 +468,14 @@ $emulatorProcess = Start-Process `
 
 Write-Host ""
 Write-Host "Emulator process started."
-Write-Host "PID:"
-Write-Host $emulatorProcess.Id
+Write-Host "PID: $($emulatorProcess.Id)"
 
 # ============================================================
 # 14. WAIT FOR EMULATOR PROCESS
 # ============================================================
 
 Write-Host ""
-Write-Host "Waiting for emulator..."
+Write-Host "Waiting for emulator process..."
 
 $running = $false
 
@@ -432,7 +491,7 @@ for ($i = 1; $i -le 60; $i++) {
 
         $running = $true
 
-        Write-Host "Emulator process running."
+        Write-Host "Emulator process is running."
         break
     }
 
@@ -460,8 +519,8 @@ if ($running) {
     Write-Host "Android 8.0 / API 26"
 
     Write-Host ""
-    Write-Host "Architecture:"
-    Write-Host "x86"
+    Write-Host "System image:"
+    Write-Host "google_apis / x86"
 
     Write-Host ""
     Write-Host "RAM:"
@@ -472,12 +531,16 @@ if ($running) {
     Write-Host "2 cores"
 
     Write-Host ""
+    Write-Host "GPU:"
+    Write-Host "SwiftShader"
+
+    Write-Host ""
     Write-Host "ADB:"
     Write-Host "NOT INSTALLED"
 
     Write-Host ""
     Write-Host "Access:"
-    Write-Host "Use Windows RDP."
+    Write-Host "Windows RDP"
 
 }
 else {
@@ -486,10 +549,12 @@ else {
     Write-Host "=============================================="
 
     Write-Host ""
-    Write-Host "Emulator process exited unexpectedly."
+    Write-Host "The emulator process exited unexpectedly."
 
     exit 1
 }
 
 Write-Host ""
-Write-Host "Android Emulator setup completed."
+Write-Host "=============================================="
+Write-Host " Android Emulator setup completed"
+Write-Host "=============================================="
