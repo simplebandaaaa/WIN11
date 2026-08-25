@@ -1,0 +1,81 @@
+name: Windows + Android Emulator RDP
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-rdp:
+    name: Windows RDP + Android Emulator
+    runs-on: windows-2025
+    timeout-minutes: 350
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Connect Tailscale
+        uses: tailscale/github-action@v4
+        with:
+          authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
+          version: latest
+
+      - name: Configure RDP
+        shell: powershell
+        env:
+          RDP_PASSWORD: ${{ secrets.RDP_PASSWORD }}
+        run: |
+          .\scripts\setup-rdp.ps1
+
+      - name: Install and start Android Emulator
+        shell: powershell
+        run: |
+          .\scripts\setup-emulator.ps1
+
+      - name: Show connection information
+        shell: powershell
+        run: |
+          Write-Host ""
+          Write-Host "=============================================="
+          Write-Host " WINDOWS RDP READY"
+          Write-Host "=============================================="
+          Write-Host ""
+
+          Write-Host "Tailscale IPv4:"
+          tailscale ip -4
+
+          Write-Host ""
+          Write-Host "Windows user:"
+          Write-Host $env:USERNAME
+
+          Write-Host ""
+          Write-Host "RDP port:"
+          Write-Host "3389"
+
+          Write-Host ""
+          Write-Host "Android Emulator:"
+          Write-Host "Android 8.0 / API 26"
+
+          Write-Host ""
+          Write-Host "=============================================="
+          Write-Host "Keep this workflow running while using RDP."
+          Write-Host "=============================================="
+          Write-Host ""
+
+      - name: Keep runner alive
+        shell: powershell
+        run: |
+          while ($true) {
+              Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] Windows RDP + Emulator running..."
+              Start-Sleep -Seconds 60
+          }
+
+      - name: Disconnect Tailscale
+        if: always()
+        shell: powershell
+        run: |
+          if (Get-Command tailscale.exe -ErrorAction SilentlyContinue) {
+              tailscale logout 2>$null
+          }
