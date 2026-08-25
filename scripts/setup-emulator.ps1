@@ -21,9 +21,7 @@ $possibleSdkPaths = @(
 $Sdk = $null
 
 foreach ($path in $possibleSdkPaths) {
-
     if (-not [string]::IsNullOrWhiteSpace($path)) {
-
         if (Test-Path $path) {
             $Sdk = $path
             break
@@ -46,16 +44,15 @@ Write-Host $Sdk
 # 2. FIND SDKMANAGER
 # ============================================================
 
+$sdkmanager = $null
+
 $sdkmanagerCandidates = @(
     "$Sdk\cmdline-tools\latest\bin\sdkmanager.bat",
     "$Sdk\cmdline-tools\bin\sdkmanager.bat",
     "$Sdk\tools\bin\sdkmanager.bat"
 )
 
-$sdkmanager = $null
-
 foreach ($candidate in $sdkmanagerCandidates) {
-
     if (Test-Path $candidate) {
         $sdkmanager = $candidate
         break
@@ -63,7 +60,6 @@ foreach ($candidate in $sdkmanagerCandidates) {
 }
 
 if (-not $sdkmanager) {
-
     $found = Get-ChildItem `
         -Path $Sdk `
         -Filter "sdkmanager.bat" `
@@ -85,53 +81,15 @@ Write-Host "SDK Manager:"
 Write-Host $sdkmanager
 
 # ============================================================
-# 3. ACCEPT LICENSES
-# ============================================================
-
-Write-Host ""
-Write-Host "Accepting Android SDK licenses..."
-
-$licenseText = ""
-
-for ($i = 0; $i -lt 100; $i++) {
-    $licenseText += "y`r`n"
-}
-
-$psiLicense = New-Object System.Diagnostics.ProcessStartInfo
-
-$psiLicense.FileName = $sdkmanager
-$psiLicense.Arguments = "--licenses"
-$psiLicense.UseShellExecute = $false
-$psiLicense.RedirectStandardInput = $true
-$psiLicense.RedirectStandardOutput = $true
-$psiLicense.RedirectStandardError = $true
-$psiLicense.CreateNoWindow = $true
-
-$licenseProcess = New-Object System.Diagnostics.Process
-$licenseProcess.StartInfo = $psiLicense
-
-[void]$licenseProcess.Start()
-
-$licenseProcess.StandardInput.Write($licenseText)
-$licenseProcess.StandardInput.Close()
-
-$licenseOut = $licenseProcess.StandardOutput.ReadToEnd()
-$licenseErr = $licenseProcess.StandardError.ReadToEnd()
-
-$licenseProcess.WaitForExit()
-
-Write-Host $licenseOut
-
-# ============================================================
-# 4. INSTALL REQUIRED COMPONENTS
+# 3. INSTALL REQUIRED COMPONENTS
 # ============================================================
 # IMPORTANT:
-# platform-tools is intentionally NOT installed.
-# Therefore ADB is NOT installed.
+# platform-tools is NOT installed.
+# ADB is therefore NOT installed.
 
 Write-Host ""
 Write-Host "=============================================="
-Write-Host " Installing Emulator Components"
+Write-Host " Installing Android Components"
 Write-Host "=============================================="
 
 $packages = @(
@@ -154,7 +112,7 @@ foreach ($package in $packages) {
 }
 
 # ============================================================
-# 5. FIND EMULATOR
+# 4. FIND EMULATOR
 # ============================================================
 
 $emulator = "$Sdk\emulator\emulator.exe"
@@ -168,8 +126,10 @@ Write-Host "Emulator:"
 Write-Host $emulator
 
 # ============================================================
-# 6. FIND AVDMANAGER
+# 5. FIND AVDMANAGER
 # ============================================================
+
+$avdmanager = $null
 
 $avdmanagerCandidates = @(
     "$Sdk\cmdline-tools\latest\bin\avdmanager.bat",
@@ -177,10 +137,7 @@ $avdmanagerCandidates = @(
     "$Sdk\tools\bin\avdmanager.bat"
 )
 
-$avdmanager = $null
-
 foreach ($candidate in $avdmanagerCandidates) {
-
     if (Test-Path $candidate) {
         $avdmanager = $candidate
         break
@@ -188,7 +145,6 @@ foreach ($candidate in $avdmanagerCandidates) {
 }
 
 if (-not $avdmanager) {
-
     $found = Get-ChildItem `
         -Path $Sdk `
         -Filter "avdmanager.bat" `
@@ -210,6 +166,64 @@ Write-Host "AVD Manager:"
 Write-Host $avdmanager
 
 # ============================================================
+# 6. FIND A HARDWARE DEVICE PROFILE
+# ============================================================
+# This prevents:
+# "Do you wish to create a custom hardware profile?"
+#
+# We automatically choose a phone profile instead of answering
+# the interactive prompt.
+
+Write-Host ""
+Write-Host "Finding Android phone hardware profiles..."
+
+$deviceOutput = & $avdmanager list device 2>&1
+
+$deviceOutput | Select-Object -First 30 | ForEach-Object {
+    Write-Host $_
+}
+
+# Prefer Pixel profile if available.
+$deviceName = $null
+
+$pixelMatch = $deviceOutput |
+    Where-Object {
+        $_ -match "pixel"
+    } |
+    Select-Object -First 1
+
+if ($pixelMatch) {
+    $deviceName = "pixel"
+}
+
+# Fallback profiles
+if (-not $deviceName) {
+
+    $fallbackProfiles = @(
+        "Nexus 5",
+        "Nexus 5X",
+        "Nexus 6P",
+        "Nexus 7"
+    )
+
+    foreach ($profile in $fallbackProfiles) {
+
+        if ($deviceOutput -match [regex]::Escape($profile)) {
+            $deviceName = $profile
+            break
+        }
+    }
+}
+
+if (-not $deviceName) {
+    throw "No suitable Android phone hardware profile was found."
+}
+
+Write-Host ""
+Write-Host "Selected hardware profile:"
+Write-Host $deviceName
+
+# ============================================================
 # 7. AVD DIRECTORY
 # ============================================================
 
@@ -217,7 +231,6 @@ $androidHome = "$env:USERPROFILE\.android"
 $avdRoot = "$androidHome\avd"
 
 if (-not (Test-Path $androidHome)) {
-
     New-Item `
         -ItemType Directory `
         -Path $androidHome `
@@ -225,7 +238,6 @@ if (-not (Test-Path $androidHome)) {
 }
 
 if (-not (Test-Path $avdRoot)) {
-
     New-Item `
         -ItemType Directory `
         -Path $avdRoot `
@@ -239,7 +251,7 @@ Write-Host "AVD directory:"
 Write-Host $avdRoot
 
 # ============================================================
-# 8. CHECK AND REMOVE OLD AVD
+# 8. REMOVE OLD ANDROID26
 # ============================================================
 
 Write-Host ""
@@ -250,42 +262,24 @@ $existingAvds = & $avdmanager list avd 2>$null
 if ($existingAvds -match "Android26") {
 
     Write-Host "Existing Android26 found."
-    Write-Host "Removing old Android26..."
+    Write-Host "Removing old AVD..."
 
     try {
-
-        & $avdmanager `
-            delete `
-            avd `
-            -n "Android26" `
-            2>$null
-
+        & $avdmanager delete avd -n "Android26" 2>$null
     }
     catch {
-
-        Write-Host "Old AVD removal returned an error."
-        Write-Host "Continuing anyway..."
+        Write-Host "Old AVD removal failed. Continuing..."
     }
-
 }
 else {
-
     Write-Host "No previous Android26 AVD found."
-    Write-Host "Fresh AVD will be created."
 }
 
-# ============================================================
-# 9. REMOVE LEFTOVER FILES
-# ============================================================
-
+# Remove leftover files
 $oldAvdDirectory = "$avdRoot\Android26.avd"
 $oldIni = "$avdRoot\Android26.ini"
 
 if (Test-Path $oldAvdDirectory) {
-
-    Write-Host ""
-    Write-Host "Removing leftover AVD directory..."
-
     Remove-Item `
         -Path $oldAvdDirectory `
         -Recurse `
@@ -294,7 +288,6 @@ if (Test-Path $oldAvdDirectory) {
 }
 
 if (Test-Path $oldIni) {
-
     Remove-Item `
         -Path $oldIni `
         -Force `
@@ -302,7 +295,7 @@ if (Test-Path $oldIni) {
 }
 
 # ============================================================
-# 10. CREATE AVD
+# 9. CREATE AVD
 # ============================================================
 
 Write-Host ""
@@ -312,63 +305,51 @@ Write-Host "=============================================="
 
 $systemImage = "system-images;android-26;google_apis;x86"
 
-# ------------------------------------------------------------
+Write-Host ""
+Write-Host "System image:"
+Write-Host $systemImage
+
+Write-Host ""
+Write-Host "Hardware profile:"
+Write-Host $deviceName
+
 # IMPORTANT:
-# Do not pipe a PowerShell array containing "no".
-# That can introduce an invisible BOM character:
+# --device supplies the hardware profile.
+# Therefore avdmanager does NOT ask:
+# "Do you wish to create a custom hardware profile?"
 #
-# Error: ﻿no is not a valid reply
-#
-# Instead start avdmanager directly and send clean ASCII
-# "no" through StandardInput.
-# ------------------------------------------------------------
+# No stdin / no "no" / no BOM issue.
 
-$psi = New-Object System.Diagnostics.ProcessStartInfo
+$arguments = @(
+    "create",
+    "avd",
+    "-n",
+    "Android26",
+    "-k",
+    $systemImage,
+    "-d",
+    $deviceName,
+    "--force"
+)
 
-$psi.FileName = $avdmanager
-$psi.Arguments = "create avd -n Android26 -k `"$systemImage`" --force"
-$psi.UseShellExecute = $false
-$psi.RedirectStandardInput = $true
-$psi.RedirectStandardOutput = $true
-$psi.RedirectStandardError = $true
-$psi.CreateNoWindow = $true
+Write-Host ""
+Write-Host "Running avdmanager..."
 
-$avdProcess = New-Object System.Diagnostics.Process
-$avdProcess.StartInfo = $psi
+& $avdmanager @arguments
 
-[void]$avdProcess.Start()
-
-# Clean ASCII response
-$avdProcess.StandardInput.Write("no")
-$avdProcess.StandardInput.Write([Environment]::NewLine)
-$avdProcess.StandardInput.Close()
-
-$avdStdOut = $avdProcess.StandardOutput.ReadToEnd()
-$avdStdErr = $avdProcess.StandardError.ReadToEnd()
-
-$avdProcess.WaitForExit()
-
-if (-not [string]::IsNullOrWhiteSpace($avdStdOut)) {
-    Write-Host $avdStdOut
-}
-
-if (-not [string]::IsNullOrWhiteSpace($avdStdErr)) {
-    Write-Host $avdStdErr
-}
-
-if ($avdProcess.ExitCode -ne 0) {
-    throw "Failed to create Android26 AVD. Exit code: $($avdProcess.ExitCode)"
+if ($LASTEXITCODE -ne 0) {
+    throw "Failed to create Android26 AVD. Exit code: $LASTEXITCODE"
 }
 
 Write-Host ""
-Write-Host "Android26 AVD creation command completed."
+Write-Host "Android26 AVD created successfully."
 
 # ============================================================
-# 11. VERIFY AVD
+# 10. VERIFY
 # ============================================================
 
 Write-Host ""
-Write-Host "Verifying Android26 AVD..."
+Write-Host "Verifying AVD..."
 
 $verifyAvds = & $avdmanager list avd 2>&1
 
@@ -381,10 +362,10 @@ if ($verifyAvds -notmatch "Android26") {
 }
 
 Write-Host ""
-Write-Host "Android26 AVD verified successfully."
+Write-Host "AVD verification successful."
 
 # ============================================================
-# 12. CONFIGURE LIGHTWEIGHT AVD
+# 11. LIGHTWEIGHT CONFIGURATION
 # ============================================================
 
 $config = "$avdRoot\Android26.avd\config.ini"
@@ -392,9 +373,7 @@ $config = "$avdRoot\Android26.avd\config.ini"
 if (Test-Path $config) {
 
     Write-Host ""
-    Write-Host "=============================================="
-    Write-Host " Applying Lightweight Configuration"
-    Write-Host "=============================================="
+    Write-Host "Applying lightweight configuration..."
 
     $settings = @{
         "hw.ramSize" = "1536"
@@ -439,7 +418,7 @@ if (Test-Path $config) {
 }
 
 # ============================================================
-# 13. START EMULATOR
+# 12. START EMULATOR
 # ============================================================
 
 Write-Host ""
@@ -468,10 +447,11 @@ $emulatorProcess = Start-Process `
 
 Write-Host ""
 Write-Host "Emulator process started."
-Write-Host "PID: $($emulatorProcess.Id)"
+Write-Host "PID:"
+Write-Host $emulatorProcess.Id
 
 # ============================================================
-# 14. WAIT FOR EMULATOR PROCESS
+# 13. WAIT FOR PROCESS
 # ============================================================
 
 Write-Host ""
@@ -499,7 +479,7 @@ for ($i = 1; $i -le 60; $i++) {
 }
 
 # ============================================================
-# 15. FINAL STATUS
+# 14. FINAL STATUS
 # ============================================================
 
 Write-Host ""
@@ -520,7 +500,7 @@ if ($running) {
 
     Write-Host ""
     Write-Host "System image:"
-    Write-Host "google_apis / x86"
+    Write-Host "Google APIs / x86"
 
     Write-Host ""
     Write-Host "RAM:"
@@ -547,9 +527,6 @@ else {
 
     Write-Host " EMULATOR DID NOT START"
     Write-Host "=============================================="
-
-    Write-Host ""
-    Write-Host "The emulator process exited unexpectedly."
 
     exit 1
 }
