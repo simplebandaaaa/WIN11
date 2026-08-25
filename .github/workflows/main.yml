@@ -1,4 +1,4 @@
-name: Windows + Android Emulator RDP
+name: Windows Android Emulator RDP
 
 on:
   workflow_dispatch:
@@ -7,59 +7,79 @@ permissions:
   contents: read
 
 jobs:
-  rdp:
+  windows-emulator:
     runs-on: windows-latest
-    timeout-minutes: 360
 
-    env:
-      ANDROID_SDK_ROOT: C:\Android\android-sdk
-      ANDROID_HOME: C:\Android\android-sdk
-      AVD_NAME: Android26
-      WS_SCRCPY_PORT: "8000"
+    timeout-minutes: 360
 
     steps:
 
-      # =========================================================
+      # ======================================================
       # CHECKOUT
-      # =========================================================
+      # ======================================================
 
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
-      # =========================================================
-      # RDP SETUP
-      # =========================================================
-
-      - name: Setup Windows RDP
-        shell: powershell
-        env:
-          RDP_PASSWORD: ${{ secrets.RDP_PASSWORD }}
-        run: |
-          .\scripts\setup-rdp.ps1
-
-      # =========================================================
-      # ANDROID EMULATOR + ADB + BROWSER BRIDGE
-      # =========================================================
-
-      - name: Setup Android Emulator
-        shell: powershell
-        run: |
-          .\scripts\setup-emulator.ps1
-
-      # =========================================================
+      # ======================================================
       # TAILSCALE
-      # =========================================================
+      # ======================================================
 
       - name: Connect Tailscale
         uses: tailscale/github-action@v4
         with:
-          oauth-client-id: ${{ secrets.TAILSCALE_OAUTH_CLIENT_ID }}
-          oauth-secret: ${{ secrets.TAILSCALE_OAUTH_SECRET }}
-          tags: tag:github-runner
+          authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
 
-      # =========================================================
+      # ======================================================
+      # VERIFY TAILSCALE
+      # ======================================================
+
+      - name: Verify Tailscale
+        shell: powershell
+        run: |
+          Write-Host ""
+          Write-Host "=============================================="
+          Write-Host " TAILSCALE STATUS"
+          Write-Host "=============================================="
+
+          tailscale status
+
+          Write-Host ""
+          Write-Host "Tailscale IP:"
+
+          tailscale ip -4
+
+      # ======================================================
+      # WINDOWS RDP
+      # ======================================================
+
+      - name: Setup Windows RDP
+        shell: powershell
+        run: |
+          Write-Host ""
+          Write-Host "=============================================="
+          Write-Host " SETTING UP WINDOWS RDP"
+          Write-Host "=============================================="
+
+          .\scripts\setup-rdp.ps1
+
+      # ======================================================
+      # ANDROID EMULATOR
+      # ======================================================
+
+      - name: Setup Android Emulator
+        shell: powershell
+        run: |
+          Write-Host ""
+          Write-Host "=============================================="
+          Write-Host " SETTING UP ANDROID EMULATOR"
+          Write-Host "=============================================="
+
+          .\scripts\setup-emulator.ps1
+
+      # ======================================================
       # SHOW CONNECTION INFORMATION
-      # =========================================================
+      # ======================================================
 
       - name: Show connection information
         shell: powershell
@@ -69,72 +89,65 @@ jobs:
           Write-Host " CONNECTION INFORMATION"
           Write-Host "=============================================="
 
-          $tailscaleExe = "$env:ProgramFiles\Tailscale\tailscale.exe"
-
-          if (Test-Path $tailscaleExe) {
-
-              $ip = & $tailscaleExe ip -4 2>$null
-
-              Write-Host ""
-              Write-Host "Tailscale IP:"
-              Write-Host $ip
-
-              Write-Host ""
-              Write-Host "RDP:"
-              Write-Host "$ip`:3389"
-
-          }
+          Write-Host ""
+          Write-Host "Tailscale IPv4:"
+          tailscale ip -4
 
           Write-Host ""
-          Write-Host "Browser Emulator:"
-          Write-Host "http://localhost:8000"
+          Write-Host "Tailscale status:"
+          tailscale status
 
           Write-Host ""
-          Write-Host "Open Chrome/Edge INSIDE the Windows RDP session"
-          Write-Host "and visit:"
-          Write-Host "http://localhost:8000"
+          Write-Host "Windows hostname:"
+          hostname
 
           Write-Host ""
-          Write-Host "=============================================="
+          Write-Host "Android Emulator:"
+          Write-Host "Android 8.0 / API 26"
+          Write-Host "AVD: Android26"
+          Write-Host "Resolution: 600x960"
+          Write-Host "Fullscreen: OFF"
 
-      # =========================================================
+      # ======================================================
       # KEEP RUNNER ALIVE
-      # =========================================================
+      # ======================================================
 
-      - name: Keep Windows RDP session alive
+      - name: Keep session alive
         shell: powershell
         run: |
           Write-Host ""
           Write-Host "=============================================="
-          Write-Host " Windows + Android Emulator is READY"
+          Write-Host " WINDOWS + ANDROID EMULATOR IS READY"
           Write-Host "=============================================="
+
+          Write-Host ""
+          Write-Host "Workflow will remain active."
+          Write-Host "Connect using the Tailscale IP shown above."
 
           while ($true) {
 
-              $emu = Get-Process `
-                -Name "emulator*" `
-                -ErrorAction SilentlyContinue
+            Write-Host ""
+            Write-Host "----- STATUS -----"
 
-              $ws = Get-Process `
-                -Name "node" `
-                -ErrorAction SilentlyContinue
+            $time = Get-Date
+            Write-Host "Time: $time"
 
-              Write-Host ""
-              Write-Host "Status: $(Get-Date)"
+            Write-Host ""
+            Write-Host "Tailscale:"
+            tailscale status
 
-              if ($emu) {
-                  Write-Host "Android Emulator: RUNNING"
-              }
-              else {
-                  Write-Host "Android Emulator: NOT FOUND"
-              }
+            Write-Host ""
+            Write-Host "Android ADB:"
+            & "C:\Android\android-sdk\platform-tools\adb.exe" devices -l
 
-              if ($ws) {
-                  Write-Host "Browser Server: RUNNING"
-              }
-              else {
-                  Write-Host "Browser Server: NOT FOUND"
-              }
+            Write-Host ""
+            Write-Host "Emulator process:"
 
-              Start-Sleep -Seconds 60
+            Get-Process `
+              -Name "emulator" `
+              -ErrorAction SilentlyContinue |
+              Select-Object Id, ProcessName, CPU |
+              Format-Table -AutoSize
+
+            Start-Sleep -Seconds 60
           }
