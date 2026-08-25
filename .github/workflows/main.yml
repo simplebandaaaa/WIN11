@@ -1,4 +1,4 @@
-name: Windows Android Emulator RDP
+name: Windows + Android Emulator RDP
 
 on:
   workflow_dispatch:
@@ -9,63 +9,69 @@ permissions:
 jobs:
   windows-emulator:
     runs-on: windows-latest
-
     timeout-minutes: 360
 
     steps:
 
-      # ======================================================
+      # =====================================================
       # CHECKOUT
-      # ======================================================
+      # =====================================================
 
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      # ======================================================
+      # =====================================================
       # TAILSCALE
-      # ======================================================
+      # =====================================================
 
       - name: Connect Tailscale
         uses: tailscale/github-action@v4
         with:
           authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
 
-      # ======================================================
+      # =====================================================
       # VERIFY TAILSCALE
-      # ======================================================
+      # =====================================================
 
       - name: Verify Tailscale
         shell: powershell
         run: |
           Write-Host ""
           Write-Host "=============================================="
-          Write-Host " TAILSCALE STATUS"
+          Write-Host " TAILSCALE"
           Write-Host "=============================================="
 
+          Write-Host ""
+          Write-Host "Tailscale status:"
           tailscale status
 
           Write-Host ""
-          Write-Host "Tailscale IP:"
-
+          Write-Host "Tailscale IPv4:"
           tailscale ip -4
 
-      # ======================================================
+      # =====================================================
       # WINDOWS RDP
-      # ======================================================
+      # =====================================================
 
       - name: Setup Windows RDP
         shell: powershell
+        env:
+          RDP_PASSWORD: ${{ secrets.RDP_PASSWORD }}
         run: |
           Write-Host ""
           Write-Host "=============================================="
           Write-Host " SETTING UP WINDOWS RDP"
           Write-Host "=============================================="
 
+          if ([string]::IsNullOrWhiteSpace($env:RDP_PASSWORD)) {
+            throw "RDP_PASSWORD environment variable is missing."
+          }
+
           .\scripts\setup-rdp.ps1
 
-      # ======================================================
+      # =====================================================
       # ANDROID EMULATOR
-      # ======================================================
+      # =====================================================
 
       - name: Setup Android Emulator
         shell: powershell
@@ -77,17 +83,17 @@ jobs:
 
           .\scripts\setup-emulator.ps1
 
-      # ======================================================
-      # SHOW CONNECTION INFORMATION
-      # ======================================================
+      # =====================================================
+      # FINAL CONNECTION INFO
+      # =====================================================
 
       - name: Show connection information
         shell: powershell
         run: |
           Write-Host ""
-          Write-Host "=============================================="
+          Write-Host "============================================================"
           Write-Host " CONNECTION INFORMATION"
-          Write-Host "=============================================="
+          Write-Host "============================================================"
 
           Write-Host ""
           Write-Host "Tailscale IPv4:"
@@ -102,52 +108,99 @@ jobs:
           hostname
 
           Write-Host ""
+          Write-Host "RDP port:"
+          Write-Host "3389"
+
+          Write-Host ""
           Write-Host "Android Emulator:"
-          Write-Host "Android 8.0 / API 26"
           Write-Host "AVD: Android26"
+          Write-Host "Android: 8.0 / API 26"
+          Write-Host "ABI: x86"
           Write-Host "Resolution: 600x960"
           Write-Host "Fullscreen: OFF"
 
-      # ======================================================
+      # =====================================================
       # KEEP RUNNER ALIVE
-      # ======================================================
+      # =====================================================
 
       - name: Keep session alive
         shell: powershell
         run: |
           Write-Host ""
-          Write-Host "=============================================="
-          Write-Host " WINDOWS + ANDROID EMULATOR IS READY"
-          Write-Host "=============================================="
+          Write-Host "============================================================"
+          Write-Host " WINDOWS + ANDROID EMULATOR READY"
+          Write-Host "============================================================"
 
           Write-Host ""
-          Write-Host "Workflow will remain active."
-          Write-Host "Connect using the Tailscale IP shown above."
+          Write-Host "Connect to the Tailscale IPv4 address shown above."
+          Write-Host "RDP port: 3389"
 
           while ($true) {
 
             Write-Host ""
-            Write-Host "----- STATUS -----"
+            Write-Host "============================================================"
+            Write-Host " STATUS"
+            Write-Host "============================================================"
 
-            $time = Get-Date
-            Write-Host "Time: $time"
+            Write-Host ""
+            Write-Host "Time:"
+            Get-Date
 
             Write-Host ""
             Write-Host "Tailscale:"
             tailscale status
 
             Write-Host ""
+            Write-Host "Tailscale IPv4:"
+            tailscale ip -4
+
+            Write-Host ""
+            Write-Host "RDP service:"
+
+            $rdpService = Get-Service `
+              -Name TermService `
+              -ErrorAction SilentlyContinue
+
+            if ($rdpService) {
+              Write-Host "Status: $($rdpService.Status)"
+            }
+            else {
+              Write-Host "TermService not found."
+            }
+
+            Write-Host ""
             Write-Host "Android ADB:"
-            & "C:\Android\android-sdk\platform-tools\adb.exe" devices -l
+
+            $adb = "C:\Android\android-sdk\platform-tools\adb.exe"
+
+            if (Test-Path $adb) {
+              & $adb devices -l
+            }
+            else {
+              Write-Host "ADB not found."
+            }
 
             Write-Host ""
             Write-Host "Emulator process:"
 
-            Get-Process `
-              -Name "emulator" `
-              -ErrorAction SilentlyContinue |
-              Select-Object Id, ProcessName, CPU |
-              Format-Table -AutoSize
+            $emulatorProcesses = Get-Process `
+              -Name emulator `
+              -ErrorAction SilentlyContinue
+
+            if ($emulatorProcesses) {
+
+              $emulatorProcesses |
+                Select-Object `
+                  Id,
+                  ProcessName,
+                  CPU |
+                Format-Table -AutoSize
+
+            }
+            else {
+
+              Write-Host "Emulator process not found."
+            }
 
             Start-Sleep -Seconds 60
           }
