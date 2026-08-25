@@ -1,46 +1,73 @@
 $ErrorActionPreference = "Stop"
 
 Write-Host "=============================================="
-Write-Host " Configuring Windows RDP"
+Write-Host " Windows RDP Setup"
 Write-Host "=============================================="
 
-# ------------------------------------------------------------
-# Validate password
-# ------------------------------------------------------------
+# ============================================================
+# REQUIRE PASSWORD
+# ============================================================
 
 if ([string]::IsNullOrWhiteSpace($env:RDP_PASSWORD)) {
     throw "RDP_PASSWORD GitHub Secret is missing."
 }
 
-if ($env:RDP_PASSWORD.Length -lt 8) {
-    throw "RDP_PASSWORD must be at least 8 characters."
-}
+# ============================================================
+# CREATE / UPDATE RDP USER
+# ============================================================
 
-# ------------------------------------------------------------
-# Current GitHub runner account
-# ------------------------------------------------------------
-
-$username = $env:USERNAME
-
-Write-Host "RDP user: $username"
-
-# ------------------------------------------------------------
-# Set password
-# ------------------------------------------------------------
-
+$username = "rdpuser"
 $password = ConvertTo-SecureString `
     $env:RDP_PASSWORD `
     -AsPlainText `
     -Force
 
-Set-LocalUser `
+Write-Host ""
+Write-Host "Creating RDP user..."
+
+$existingUser = Get-LocalUser `
     -Name $username `
-    -Password $password
+    -ErrorAction SilentlyContinue
 
-# ------------------------------------------------------------
-# Enable Remote Desktop
-# ------------------------------------------------------------
+if ($existingUser) {
 
+    Write-Host "Existing RDP user found."
+    Write-Host "Updating password..."
+
+    Set-LocalUser `
+        -Name $username `
+        -Password $password
+
+}
+else {
+
+    New-LocalUser `
+        -Name $username `
+        -Password $password `
+        -AccountNeverExpires `
+        -PasswordNeverExpires `
+        -UserMayNotChangePassword `
+        -Description "GitHub Windows RDP user"
+
+}
+
+# ============================================================
+# ADD TO REMOTE DESKTOP USERS
+# ============================================================
+
+Write-Host ""
+Write-Host "Adding user to Remote Desktop Users..."
+
+Add-LocalGroupMember `
+    -Group "Remote Desktop Users" `
+    -Member $username `
+    -ErrorAction SilentlyContinue
+
+# ============================================================
+# ENABLE RDP
+# ============================================================
+
+Write-Host ""
 Write-Host "Enabling Remote Desktop..."
 
 Set-ItemProperty `
@@ -48,20 +75,37 @@ Set-ItemProperty `
     -Name "fDenyTSConnections" `
     -Value 0
 
-# ------------------------------------------------------------
-# Enable RDP firewall rules
-# ------------------------------------------------------------
+Set-ItemProperty `
+    -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" `
+    -Name "UserAuthentication" `
+    -Value 1
 
-Write-Host "Enabling RDP firewall rules..."
+# ============================================================
+# FIREWALL
+# ============================================================
+
+Write-Host ""
+Write-Host "Configuring RDP firewall..."
 
 Enable-NetFirewallRule `
     -DisplayGroup "Remote Desktop" `
     -ErrorAction SilentlyContinue
 
-# ------------------------------------------------------------
-# Configure Remote Desktop service
-# ------------------------------------------------------------
+# ============================================================
+# NETWORK LEVEL AUTHENTICATION
+# ============================================================
 
+Set-ItemProperty `
+    -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" `
+    -Name "UserAuthentication" `
+    -Type DWord `
+    -Value 1
+
+# ============================================================
+# RDP SERVICE
+# ============================================================
+
+Write-Host ""
 Write-Host "Starting Remote Desktop service..."
 
 Set-Service `
@@ -72,45 +116,61 @@ Start-Service `
     -Name "TermService" `
     -ErrorAction SilentlyContinue
 
-# ------------------------------------------------------------
-# Add user to Remote Desktop Users
-# ------------------------------------------------------------
+# ============================================================
+# REDUCE RDP VISUAL TRAFFIC
+# ============================================================
 
-Write-Host "Configuring Remote Desktop Users group..."
+Write-Host ""
+Write-Host "Applying low-data RDP settings..."
 
-try {
-    Add-LocalGroupMember `
-        -Group "Remote Desktop Users" `
-        -Member $username `
-        -ErrorAction SilentlyContinue
-}
-catch {
-    Write-Host "User already belongs to Remote Desktop Users."
-}
+reg add `
+    "HKLM\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services" `
+    /v fDisableWallpaper `
+    /t REG_DWORD `
+    /d 1 `
+    /f | Out-Null
 
-# ------------------------------------------------------------
-# Verify
-# ------------------------------------------------------------
+reg add `
+    "HKLM\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services" `
+    /v fDisableFullWindowDrag `
+    /t REG_DWORD `
+    /d 1 `
+    /f | Out-Null
+
+reg add `
+    "HKLM\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services" `
+    /v fDisableMenuAnims `
+    /t REG_DWORD `
+    /d 1 `
+    /f | Out-Null
+
+reg add `
+    "HKLM\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services" `
+    /v fDisableThemes `
+    /t REG_DWORD `
+    /d 1 `
+    /f | Out-Null
+
+# ============================================================
+# CHECK
+# ============================================================
 
 Write-Host ""
 Write-Host "=============================================="
-Write-Host " RDP CONFIGURATION COMPLETE"
+Write-Host " RDP READY"
 Write-Host "=============================================="
 
 Write-Host ""
-Write-Host "User:"
+Write-Host "Username:"
 Write-Host $username
 
 Write-Host ""
-Write-Host "RDP service:"
-Get-Service TermService |
-    Select-Object Status, Name, StartType
-
-Write-Host ""
-Write-Host "RDP enabled:"
-(Get-ItemProperty `
-    "HKLM:\System\CurrentControlSet\Control\Terminal Server").fDenyTSConnections
-
-Write-Host ""
-Write-Host "RDP port:"
+Write-Host "Port:"
 Write-Host "3389"
+
+Write-Host ""
+Write-Host "RDP service:"
+Write-Host "RUNNING"
+
+Write-Host ""
+Write-Host "=============================================="
