@@ -2,16 +2,16 @@ $ErrorActionPreference = "Stop"
 
 Write-Host ""
 Write-Host "============================================================"
-Write-Host " ANDROID 26 EMULATOR - NO ADB"
+Write-Host " ANDROID 26 EMULATOR - CLEAN AVD SETUP"
 Write-Host "============================================================"
 
 # ============================================================
-# CONFIGURATION
+# CONFIG
 # ============================================================
 
 $sdk = "C:\Android\android-sdk"
 
-$emulator  = Join-Path $sdk "emulator\emulator.exe"
+$emulator   = Join-Path $sdk "emulator\emulator.exe"
 $sdkmanager = Join-Path $sdk "cmdline-tools\latest\bin\sdkmanager.bat"
 $avdmanager = Join-Path $sdk "cmdline-tools\latest\bin\avdmanager.bat"
 
@@ -46,36 +46,33 @@ New-Item `
     -Force |
     Out-Null
 
-Write-Host ""
-Write-Host "SDK:"
-Write-Host $sdk
-
-Write-Host ""
-Write-Host "AVD:"
-Write-Host $avdName
-
-Write-Host ""
-Write-Host "ADB:"
-Write-Host "DISABLED"
-
 # ============================================================
-# CHECK EMULATOR
+# TOOL CHECK
 # ============================================================
 
 Write-Host ""
 Write-Host "============================================================"
-Write-Host " CHECKING EMULATOR"
+Write-Host " CHECKING TOOLS"
 Write-Host "============================================================"
 
 if (-not (Test-Path $emulator)) {
     throw "emulator.exe not found: $emulator"
 }
 
-Write-Host ""
-Write-Host "emulator.exe = OK"
+if (-not (Test-Path $sdkmanager)) {
+    throw "sdkmanager.bat not found: $sdkmanager"
+}
+
+if (-not (Test-Path $avdmanager)) {
+    throw "avdmanager.bat not found: $avdmanager"
+}
+
+Write-Host "Emulator : OK"
+Write-Host "SDK      : OK"
+Write-Host "AVDManager: OK"
 
 # ============================================================
-# CHECK SYSTEM IMAGE
+# SYSTEM IMAGE
 # ============================================================
 
 Write-Host ""
@@ -90,167 +87,28 @@ $imagePath = Join-Path `
 if (Test-Path $imagePath) {
 
     Write-Host ""
-    Write-Host "Android 26 Google APIs x86 = READY"
+    Write-Host "Android 26 Google APIs x86 already installed."
 
 }
 else {
 
     Write-Host ""
-    Write-Host "Android 26 image missing."
-    Write-Host "Installing..."
-
-    if (-not (Test-Path $sdkmanager)) {
-        throw "sdkmanager not found: $sdkmanager"
-    }
+    Write-Host "Installing Android 26 Google APIs x86..."
 
     & cmd.exe /c `
-        "`"$sdkmanager`" `"$systemImage`"" |
+        "`"$sdkmanager`" `"$systemImage`"" 2>&1 |
         ForEach-Object {
             Write-Host $_
         }
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "System image installation failed."
+    }
 
     if (-not (Test-Path $imagePath)) {
-        throw "Android 26 system image installation failed."
-    }
-
-    Write-Host ""
-    Write-Host "Android 26 image installed."
-}
-
-# ============================================================
-# CHECK AVD
-# ============================================================
-
-Write-Host ""
-Write-Host "============================================================"
-Write-Host " CHECKING ANDROID26 AVD"
-Write-Host "============================================================"
-
-if (Test-Path $avdConfig) {
-
-    Write-Host ""
-    Write-Host "Android26 AVD already exists."
-    Write-Host $avdPath
-
-}
-else {
-
-    Write-Host ""
-    Write-Host "Android26 AVD not found."
-    Write-Host "Creating..."
-
-    if (-not (Test-Path $avdmanager)) {
-        throw "avdmanager not found: $avdmanager"
-    }
-
-    # ASCII input through cmd.exe.
-    # Prevents the previous BOM/no problem.
-
-    $createCommand = `
-        "echo no|`"$avdmanager`" create avd -n $avdName -k `"$systemImage`" -d pixel --force"
-
-    & cmd.exe /c $createCommand |
-        ForEach-Object {
-            Write-Host $_
-        }
-
-    Start-Sleep -Seconds 3
-}
-
-# ============================================================
-# AVD VERIFICATION
-# ============================================================
-
-Write-Host ""
-Write-Host "============================================================"
-Write-Host " VERIFYING ANDROID26"
-Write-Host "============================================================"
-
-Start-Sleep -Seconds 2
-
-if (Test-Path $avdConfig) {
-
-    Write-Host ""
-    Write-Host "Android26 AVD verified."
-    Write-Host "Path:"
-    Write-Host $avdPath
-
-}
-else {
-
-    Write-Host ""
-    Write-Host "config.ini not found."
-
-    Write-Host ""
-    Write-Host "Checking avdmanager..."
-
-    $avdOutput = `
-        & cmd.exe /c "`"$avdmanager`" list avd" 2>&1
-
-    $avdText = $avdOutput | Out-String
-
-    Write-Host ""
-    Write-Host $avdText
-
-    Start-Sleep -Seconds 2
-
-    if (Test-Path $avdConfig) {
-
-        Write-Host ""
-        Write-Host "Android26 found after refresh."
-
-    }
-    elseif ($avdText -match "(?m)^\s*Name:\s*Android26\s*$") {
-
-        if (-not (Test-Path $avdPath)) {
-            throw "Android26 listed but directory is missing."
-        }
-
-        Write-Host ""
-        Write-Host "Android26 confirmed."
-
-    }
-    else {
-
-        throw "Android26 AVD could not be verified."
+        throw "Android 26 system image was not installed."
     }
 }
-
-# ============================================================
-# FAST CONFIGURATION
-# ============================================================
-
-Write-Host ""
-Write-Host "============================================================"
-Write-Host " APPLYING FAST SETTINGS"
-Write-Host "============================================================"
-
-$configLines = @(
-    "hw.cpu.ncore=2"
-    "hw.ramSize=2048"
-    "vm.heapSize=256"
-    "hw.gpu.enabled=yes"
-    "hw.gpu.mode=swiftshader_indirect"
-    "hw.lcd.width=600"
-    "hw.lcd.height=960"
-    "hw.lcd.density=240"
-    "hw.keyboard=yes"
-    "hw.audioInput=no"
-    "hw.audioOutput=no"
-    "camera.back=none"
-    "camera.front=none"
-    "disk.dataPartition.size=4096M"
-    "fastboot.forceColdBoot=yes"
-    "showDeviceFrame=no"
-)
-
-$configLines |
-    Set-Content `
-        -Path $avdConfig `
-        -Encoding ASCII
-
-Write-Host ""
-Write-Host "Fast configuration applied."
 
 # ============================================================
 # STOP OLD EMULATOR
@@ -258,19 +116,18 @@ Write-Host "Fast configuration applied."
 
 Write-Host ""
 Write-Host "============================================================"
-Write-Host " CLEANING OLD EMULATOR"
+Write-Host " STOPPING OLD EMULATOR"
 Write-Host "============================================================"
 
-$oldEmulator = Get-Process `
+$old = Get-Process `
     -Name emulator `
     -ErrorAction SilentlyContinue
 
-if ($oldEmulator) {
+if ($old) {
 
-    Write-Host ""
     Write-Host "Stopping existing emulator..."
 
-    $oldEmulator |
+    $old |
         Stop-Process `
             -Force `
             -ErrorAction SilentlyContinue
@@ -279,21 +136,219 @@ if ($oldEmulator) {
 }
 
 # ============================================================
-# NO ADB
+# REMOVE BROKEN AVD
 # ============================================================
 
 Write-Host ""
 Write-Host "============================================================"
-Write-Host " ADB DISABLED"
+Write-Host " RECREATING ANDROID26 AVD"
 Write-Host "============================================================"
 
 Write-Host ""
-Write-Host "ADB is completely removed from this setup."
-Write-Host "No adb.exe"
-Write-Host "No tcp:5037"
-Write-Host "No kill-server"
-Write-Host "No start-server"
-Write-Host "No adb device polling"
+Write-Host "Removing old/broken Android26..."
+
+# avdmanager delete is allowed to fail if AVD doesn't exist.
+try {
+
+    & cmd.exe /c `
+        "`"$avdmanager`" delete avd -n $avdName" 2>&1 |
+        ForEach-Object {
+            Write-Host $_
+        }
+
+}
+catch {
+    # Ignore missing AVD.
+}
+
+Start-Sleep -Seconds 2
+
+# Remove leftover directory too.
+if (Test-Path $avdPath) {
+
+    Write-Host ""
+    Write-Host "Removing leftover AVD directory..."
+
+    Remove-Item `
+        -Path $avdPath `
+        -Recurse `
+        -Force `
+        -ErrorAction SilentlyContinue
+
+}
+
+# ============================================================
+# CREATE FRESH AVD
+# ============================================================
+
+Write-Host ""
+Write-Host "Creating fresh Android26..."
+
+# IMPORTANT:
+# Do not use PowerShell Unicode input.
+# cmd.exe sends plain ASCII "no".
+
+$createCommand = `
+    "echo no|`"$avdmanager`" create avd -n $avdName -k `"$systemImage`" -d pixel --force"
+
+& cmd.exe /c $createCommand 2>&1 |
+    ForEach-Object {
+        Write-Host $_
+    }
+
+if ($LASTEXITCODE -ne 0) {
+    throw "AVD creation failed."
+}
+
+Start-Sleep -Seconds 5
+
+# ============================================================
+# VERIFY AVD FILE
+# ============================================================
+
+Write-Host ""
+Write-Host "============================================================"
+Write-Host " VERIFYING FRESH AVD"
+Write-Host "============================================================"
+
+if (-not (Test-Path $avdConfig)) {
+
+    Write-Host ""
+    Write-Host "AVD config was not found."
+
+    & cmd.exe /c `
+        "`"$avdmanager`" list avd" 2>&1 |
+        ForEach-Object {
+            Write-Host $_
+        }
+
+    throw "Android26 AVD creation did not produce config.ini."
+}
+
+Write-Host ""
+Write-Host "Android26 config.ini found:"
+Write-Host $avdConfig
+
+# ============================================================
+# SHOW ORIGINAL CONFIG
+# ============================================================
+
+Write-Host ""
+Write-Host "============================================================"
+Write-Host " GENERATED AVD CONFIG"
+Write-Host "============================================================"
+
+Get-Content `
+    $avdConfig |
+    ForEach-Object {
+        Write-Host $_
+    }
+
+# ============================================================
+# SAFE PERFORMANCE SETTINGS
+# ============================================================
+#
+# IMPORTANT:
+# We DO NOT replace config.ini.
+# We only update existing properties / append valid ones.
+#
+
+Write-Host ""
+Write-Host "============================================================"
+Write-Host " APPLYING SAFE PERFORMANCE SETTINGS"
+Write-Host "============================================================"
+
+$config = Get-Content `
+    $avdConfig `
+    -ErrorAction Stop
+
+function Set-AvdProperty {
+    param(
+        [string]$Name,
+        [string]$Value
+    )
+
+    $script:config = @(
+        $script:config |
+            Where-Object {
+                $_ -notmatch ("^" + [regex]::Escape($Name) + "=")
+            }
+
+        "$Name=$Value"
+    )
+}
+
+# Safe properties for performance.
+Set-AvdProperty "hw.cpu.ncore" "2"
+Set-AvdProperty "hw.ramSize" "2048"
+Set-AvdProperty "vm.heapSize" "256"
+Set-AvdProperty "hw.gpu.enabled" "yes"
+Set-AvdProperty "hw.gpu.mode" "swiftshader_indirect"
+Set-AvdProperty "hw.keyboard" "yes"
+Set-AvdProperty "hw.audioInput" "no"
+Set-AvdProperty "hw.audioOutput" "no"
+Set-AvdProperty "camera.back" "none"
+Set-AvdProperty "camera.front" "none"
+Set-AvdProperty "showDeviceFrame" "no"
+
+# Keep generated AVD configuration intact.
+$config |
+    Set-Content `
+        -Path $avdConfig `
+        -Encoding ASCII
+
+Write-Host ""
+Write-Host "Safe performance settings applied."
+
+# ============================================================
+# VERIFY CONFIG AGAIN
+# ============================================================
+
+Write-Host ""
+Write-Host "============================================================"
+Write-Host " VERIFYING CONFIGURATION"
+Write-Host "============================================================"
+
+$configCheck = Get-Content `
+    $avdConfig `
+    -ErrorAction Stop
+
+if (-not ($configCheck -match "^AvdId=Android26$")) {
+
+    Write-Host ""
+    Write-Host "WARNING: AvdId property is not present."
+
+}
+
+Write-Host ""
+Write-Host "Config file is readable."
+
+# ============================================================
+# AVDMANAGER FINAL CHECK
+# ============================================================
+
+Write-Host ""
+Write-Host "============================================================"
+Write-Host " AVD MANAGER CHECK"
+Write-Host "============================================================"
+
+$avdList = `
+    & cmd.exe /c "`"$avdmanager`" list avd" 2>&1
+
+$avdList |
+    ForEach-Object {
+        Write-Host $_
+    }
+
+$avdText = $avdList | Out-String
+
+if (-not ($avdText -match "(?m)^\s*Name:\s*Android26\s*$")) {
+
+    throw "Android26 is not recognized by avdmanager."
+}
+
+Write-Host ""
+Write-Host "Android26 recognized by avdmanager."
 
 # ============================================================
 # START EMULATOR
@@ -325,10 +380,6 @@ Write-Host ""
 Write-Host "Arguments:"
 Write-Host ($arguments -join " ")
 
-# ============================================================
-# START PROCESS
-# ============================================================
-
 try {
 
     $emuProcess = Start-Process `
@@ -341,7 +392,7 @@ try {
 catch {
 
     throw `
-        "Could not start Android Emulator: $($_.Exception.Message)"
+        "Could not start emulator: $($_.Exception.Message)"
 }
 
 if (-not $emuProcess) {
@@ -353,7 +404,7 @@ Write-Host "Emulator PID:"
 Write-Host $emuProcess.Id
 
 # ============================================================
-# WAIT FOR EMULATOR PROCESS
+# WAIT FOR PROCESS
 # ============================================================
 
 Write-Host ""
@@ -361,7 +412,7 @@ Write-Host "============================================================"
 Write-Host " WAITING FOR EMULATOR"
 Write-Host "============================================================"
 
-$emulatorStarted = $false
+$running = $false
 
 for ($i = 1; $i -le 120; $i++) {
 
@@ -373,9 +424,9 @@ for ($i = 1; $i -le 120; $i++) {
 
     if ($process) {
 
-        if (-not $emulatorStarted) {
+        if (-not $running) {
 
-            $emulatorStarted = $true
+            $running = $true
 
             Write-Host ""
             Write-Host "Android Emulator process is running."
@@ -386,7 +437,7 @@ for ($i = 1; $i -le 120; $i++) {
     else {
 
         Write-Host ""
-        Write-Host "Emulator process stopped unexpectedly."
+        Write-Host "Emulator stopped."
 
         break
     }
@@ -396,23 +447,24 @@ for ($i = 1; $i -le 120; $i++) {
         Write-Host ""
         Write-Host "Waiting... $i/120"
 
-        Write-Host ""
-        Write-Host "Emulator process status:"
-
-        Get-Process `
+        $p = Get-Process `
             -Name emulator `
-            -ErrorAction SilentlyContinue |
-            Select-Object `
-                Id,
-                ProcessName,
-                CPU,
-                WorkingSet64 |
-            Format-Table -AutoSize
+            -ErrorAction SilentlyContinue
+
+        if ($p) {
+
+            Write-Host "Emulator process = RUNNING"
+
+        }
+        else {
+
+            Write-Host "Emulator process = STOPPED"
+        }
     }
 }
 
 # ============================================================
-# PROCESS DIAGNOSTICS
+# FINAL PROCESS CHECK
 # ============================================================
 
 Write-Host ""
@@ -420,30 +472,11 @@ Write-Host "============================================================"
 Write-Host " EMULATOR DIAGNOSTICS"
 Write-Host "============================================================"
 
-$currentProcess = Get-Process `
+$current = Get-Process `
     -Id $emuProcess.Id `
     -ErrorAction SilentlyContinue
 
-if ($currentProcess) {
-
-    Write-Host ""
-    Write-Host "Emulator process:"
-    Write-Host "RUNNING"
-
-    Write-Host ""
-    Write-Host "PID:"
-    Write-Host $currentProcess.Id
-
-    Write-Host ""
-    Write-Host "CPU:"
-    Write-Host $currentProcess.CPU
-
-    Write-Host ""
-    Write-Host "Memory:"
-    Write-Host $currentProcess.WorkingSet64
-
-}
-else {
+if (-not $current) {
 
     Write-Host ""
     Write-Host "Emulator process:"
@@ -451,7 +484,19 @@ else {
 
     Write-Host ""
     Write-Host "AVD:"
-    & cmd.exe /c "`"$avdmanager`" list avd" 2>&1 |
+    
+    & cmd.exe /c `
+        "`"$avdmanager`" list avd" 2>&1 |
+        ForEach-Object {
+            Write-Host $_
+        }
+
+    Write-Host ""
+    Write-Host "CONFIG:"
+    
+    Get-Content `
+        $avdConfig `
+        -ErrorAction SilentlyContinue |
         ForEach-Object {
             Write-Host $_
         }
@@ -460,12 +505,12 @@ else {
 }
 
 # ============================================================
-# FINAL
+# SUCCESS
 # ============================================================
 
 Write-Host ""
 Write-Host "============================================================"
-Write-Host " ANDROID26 EMULATOR STARTED"
+Write-Host " ANDROID26 EMULATOR READY"
 Write-Host "============================================================"
 
 Write-Host ""
@@ -493,10 +538,6 @@ Write-Host "CPU:"
 Write-Host "2 cores"
 
 Write-Host ""
-Write-Host "Resolution:"
-Write-Host "600 x 960"
-
-Write-Host ""
 Write-Host "GPU:"
 Write-Host "SwiftShader"
 
@@ -506,14 +547,6 @@ Write-Host "OFF"
 
 Write-Host ""
 Write-Host "Camera:"
-Write-Host "OFF"
-
-Write-Host ""
-Write-Host "Animations:"
-Write-Host "OFF"
-
-Write-Host ""
-Write-Host "Fullscreen:"
 Write-Host "OFF"
 
 Write-Host ""
