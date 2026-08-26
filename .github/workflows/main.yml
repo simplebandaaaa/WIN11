@@ -13,16 +13,16 @@ jobs:
 
     steps:
 
-      # ======================================================
+      # =====================================================
       # CHECKOUT
-      # ======================================================
+      # =====================================================
 
       - name: Checkout
         uses: actions/checkout@v6
 
-      # ======================================================
+      # =====================================================
       # TAILSCALE
-      # ======================================================
+      # =====================================================
 
       - name: Connect Tailscale
         uses: tailscale/github-action@v4
@@ -41,251 +41,159 @@ jobs:
 
           Write-Host ""
           Write-Host "Tailscale IPv4:"
-          $ip = tailscale ip -4
+
+          $ip = (tailscale ip -4).Trim()
+
           Write-Host $ip
 
-      # ======================================================
+      # =====================================================
       # WINDOWS RDP + NOVNC
-      # ======================================================
+      # =====================================================
 
       - name: Setup Windows RDP
         shell: powershell
         env:
           RDP_PASSWORD: ${{ secrets.RDP_PASSWORD }}
         run: |
+
+          Write-Host ""
+          Write-Host "============================================================"
+          Write-Host " WINDOWS RDP + NOVNC"
+          Write-Host "============================================================"
+
           if ([string]::IsNullOrWhiteSpace($env:RDP_PASSWORD)) {
             throw "RDP_PASSWORD GitHub Secret is missing."
           }
 
           .\scripts\setup-rdp.ps1
 
-      # ======================================================
-      # BROWSER SERVICE DIAGNOSTICS
-      # ======================================================
+      # =====================================================
+      # CHECK BROWSER SERVICE
+      # =====================================================
 
-      - name: Test Browser Service
+      - name: Check noVNC
         shell: powershell
         run: |
 
           Write-Host ""
           Write-Host "============================================================"
-          Write-Host " BROWSER / NOVNC DIAGNOSTICS"
+          Write-Host " NOVNC CHECK"
           Write-Host "============================================================"
 
-          # --------------------------------------------------
-          # TAILSCALE IP
-          # --------------------------------------------------
-
           Write-Host ""
-          Write-Host "Tailscale IPv4:"
-
-          $ip = (tailscale ip -4).Trim()
-
-          Write-Host $ip
-
-          # --------------------------------------------------
-          # PORT 8080
-          # --------------------------------------------------
-
-          Write-Host ""
-          Write-Host "Checking TCP port 8080..."
+          Write-Host "Port 8080:"
 
           $listener = Get-NetTCPConnection `
-              -LocalPort 8080 `
-              -State Listen `
-              -ErrorAction SilentlyContinue
+            -LocalPort 8080 `
+            -State Listen `
+            -ErrorAction SilentlyContinue
 
           if ($listener) {
 
-              Write-Host ""
-              Write-Host "RESULT: 8080 = LISTENING"
+            Write-Host "8080 = LISTENING"
 
-              $listener |
-                  Select-Object LocalAddress,LocalPort,State,OwningProcess |
-                  Format-Table -AutoSize
+            $listener |
+              Select-Object LocalAddress,LocalPort,State,OwningProcess |
+              Format-Table -AutoSize
 
           }
           else {
 
-              Write-Host ""
-              Write-Host "RESULT: 8080 = NOT LISTENING"
+            Write-Host "8080 = NOT LISTENING"
 
           }
 
-          # --------------------------------------------------
-          # LOCAL HTTP TEST
-          # --------------------------------------------------
-
           Write-Host ""
-          Write-Host "Testing local noVNC HTTP..."
+          Write-Host "Local HTTP test:"
 
           try {
 
-              $response = Invoke-WebRequest `
-                  -Uri "http://127.0.0.1:8080/vnc.html" `
-                  -UseBasicParsing `
-                  -TimeoutSec 15
+            $response = Invoke-WebRequest `
+              -Uri "http://127.0.0.1:8080/vnc.html" `
+              -UseBasicParsing `
+              -TimeoutSec 15
 
-              Write-Host ""
-              Write-Host "RESULT: LOCAL HTTP = OK"
-              Write-Host "HTTP Status: $($response.StatusCode)"
-              Write-Host "Content Length: $($response.Content.Length)"
+            Write-Host "HTTP STATUS: $($response.StatusCode)"
 
           }
           catch {
 
-              Write-Host ""
-              Write-Host "RESULT: LOCAL HTTP = FAILED"
-              Write-Host $_.Exception.Message
+            Write-Host "LOCAL HTTP FAILED:"
+            Write-Host $_.Exception.Message
 
           }
 
-          # --------------------------------------------------
-          # TAILSCALE INTERFACE TEST
-          # --------------------------------------------------
+      # =====================================================
+      # TAILSCALE SERVE
+      # =====================================================
 
-          Write-Host ""
-          Write-Host "Testing Tailscale IP HTTP..."
-
-          try {
-
-              $response = Invoke-WebRequest `
-                  -Uri "http://${ip}:8080/vnc.html" `
-                  -UseBasicParsing `
-                  -TimeoutSec 15
-
-              Write-Host ""
-              Write-Host "RESULT: TAILSCALE HTTP = OK"
-              Write-Host "HTTP Status: $($response.StatusCode)"
-
-          }
-          catch {
-
-              Write-Host ""
-              Write-Host "RESULT: TAILSCALE HTTP = FAILED"
-              Write-Host $_.Exception.Message
-
-          }
-
-          # --------------------------------------------------
-          # TCP CONNECTION TEST
-          # --------------------------------------------------
-
-          Write-Host ""
-          Write-Host "Testing Tailscale TCP 8080..."
-
-          try {
-
-              $tcp = Test-NetConnection `
-                  -ComputerName $ip `
-                  -Port 8080 `
-                  -WarningAction SilentlyContinue
-
-              Write-Host ""
-              Write-Host "TCP Test:"
-              Write-Host "Remote Address: $($tcp.RemoteAddress)"
-              Write-Host "Port: $($tcp.RemotePort)"
-              Write-Host "TcpTestSucceeded: $($tcp.TcpTestSucceeded)"
-
-          }
-          catch {
-
-              Write-Host ""
-              Write-Host "TCP TEST FAILED"
-              Write-Host $_.Exception.Message
-
-          }
-
-          # --------------------------------------------------
-          # FIREWALL
-          # --------------------------------------------------
-
-          Write-Host ""
-          Write-Host "Checking firewall rules..."
-
-          Get-NetFirewallRule `
-              -ErrorAction SilentlyContinue |
-              Where-Object {
-                  $_.DisplayName -like "*Browser*" -or
-                  $_.DisplayName -like "*noVNC*" -or
-                  $_.DisplayName -like "*VNC*"
-              } |
-              Select-Object DisplayName,Enabled,Direction,Action |
-              Format-Table -AutoSize
-
-          # --------------------------------------------------
-          # WEB PROCESS
-          # --------------------------------------------------
-
-          Write-Host ""
-          Write-Host "Checking websockify process..."
-
-          Get-Process `
-              -ErrorAction SilentlyContinue |
-              Where-Object {
-                  $_.ProcessName -match "python|websockify"
-              } |
-              Select-Object Id,ProcessName,CPU |
-              Format-Table -AutoSize
-
-          # --------------------------------------------------
-          # NOVNC LOG
-          # --------------------------------------------------
-
-          Write-Host ""
-          Write-Host "Checking noVNC log..."
-
-          $logs = @(
-              "C:\noVNC\websockify.log",
-              "C:\noVNC\websockify.log.err"
-          )
-
-          foreach ($log in $logs) {
-
-              if (Test-Path $log) {
-
-                  Write-Host ""
-                  Write-Host "LOG: $log"
-
-                  Get-Content `
-                      -Path $log `
-                      -Tail 100 |
-                      ForEach-Object {
-                          Write-Host $_
-                      }
-              }
-          }
-
-          # --------------------------------------------------
-          # FINAL URL
-          # --------------------------------------------------
+      - name: Expose noVNC with Tailscale Serve
+        shell: powershell
+        run: |
 
           Write-Host ""
           Write-Host "============================================================"
-          Write-Host " BROWSER ACCESS"
+          Write-Host " TAILSCALE SERVE"
           Write-Host "============================================================"
 
-          Write-Host ""
-          Write-Host "Open this in Chrome:"
+          # Remove old Serve configuration
+          tailscale serve reset 2>$null
+
+          Start-Sleep -Seconds 2
 
           Write-Host ""
-          Write-Host "http://${ip}:8080/vnc.html"
+          Write-Host "Starting Tailscale Serve..."
+
+          tailscale serve --bg http://127.0.0.1:8080
+
+          if ($LASTEXITCODE -ne 0) {
+
+            Write-Host ""
+            Write-Host "Tailscale Serve failed."
+
+            Write-Host ""
+            Write-Host "Current Tailscale status:"
+            tailscale status
+
+            Write-Host ""
+            Write-Host "Serve status:"
+            tailscale serve status
+
+            throw "Unable to start Tailscale Serve."
+
+          }
+
+          Start-Sleep -Seconds 5
 
           Write-Host ""
           Write-Host "============================================================"
+          Write-Host " TAILSCALE SERVE STATUS"
+          Write-Host "============================================================"
 
-      # ======================================================
+          tailscale serve status
+
+          Write-Host ""
+          Write-Host "Tailscale IP:"
+          tailscale ip -4
+
+      # =====================================================
       # ANDROID EMULATOR
-      # ======================================================
+      # =====================================================
 
       - name: Setup Android Emulator
         shell: powershell
         run: |
+
+          Write-Host ""
+          Write-Host "============================================================"
+          Write-Host " ANDROID EMULATOR"
+          Write-Host "============================================================"
+
           .\scripts\setup-emulator.ps1
 
-      # ======================================================
-      # FINAL ACCESS INFORMATION
-      # ======================================================
+      # =====================================================
+      # FINAL ACCESS
+      # =====================================================
 
       - name: Show Final Access
         shell: powershell
@@ -299,16 +207,20 @@ jobs:
           $ip = (tailscale ip -4).Trim()
 
           Write-Host ""
-          Write-Host "Chrome / noVNC:"
+          Write-Host "Tailscale IPv4:"
+          Write-Host $ip
+
+          Write-Host ""
+          Write-Host "Direct browser:"
           Write-Host "http://${ip}:8080/vnc.html"
+
+          Write-Host ""
+          Write-Host "Tailscale Serve:"
+          tailscale serve status
 
           Write-Host ""
           Write-Host "RDP:"
           Write-Host "${ip}:3389"
-
-          Write-Host ""
-          Write-Host "Tailscale IP:"
-          Write-Host $ip
 
           Write-Host ""
           Write-Host "Android:"
@@ -324,10 +236,20 @@ jobs:
 
           Write-Host ""
           Write-Host "============================================================"
+          Write-Host " IMPORTANT"
+          Write-Host "============================================================"
 
-      # ======================================================
-      # KEEP RUNNER ALIVE
-      # ======================================================
+          Write-Host ""
+          Write-Host "For Chrome, use the HTTPS URL shown by:"
+          Write-Host "tailscale serve status"
+
+          Write-Host ""
+          Write-Host "Do NOT use the old :8080 URL if Serve gives"
+          Write-Host "a ts.net HTTPS URL."
+
+      # =====================================================
+      # KEEP ALIVE
+      # =====================================================
 
       - name: Keep session alive
         shell: powershell
@@ -341,8 +263,12 @@ jobs:
           $ip = (tailscale ip -4).Trim()
 
           Write-Host ""
+          Write-Host "Tailscale IP:"
+          Write-Host $ip
+
+          Write-Host ""
           Write-Host "Browser:"
-          Write-Host "http://${ip}:8080/vnc.html"
+          tailscale serve status
 
           Write-Host ""
           Write-Host "RDP:"
@@ -352,58 +278,62 @@ jobs:
 
           while ($true) {
 
-              Write-Host ""
-              Write-Host "------------------------------------------------------------"
-              Write-Host " STATUS"
-              Write-Host "------------------------------------------------------------"
+            Write-Host ""
+            Write-Host "------------------------------------------------------------"
+            Write-Host " STATUS"
+            Write-Host "------------------------------------------------------------"
 
-              Write-Host ""
-              Write-Host "Time:"
-              Get-Date
+            Write-Host ""
+            Write-Host "Time:"
+            Get-Date
 
-              Write-Host ""
-              Write-Host "Tailscale:"
-              tailscale status
+            Write-Host ""
+            Write-Host "Tailscale:"
+            tailscale status
 
-              Write-Host ""
-              Write-Host "Browser port 8080:"
+            Write-Host ""
+            Write-Host "Tailscale Serve:"
+            tailscale serve status
 
-              $port = Get-NetTCPConnection `
-                  -LocalPort 8080 `
-                  -State Listen `
-                  -ErrorAction SilentlyContinue
+            Write-Host ""
+            Write-Host "Browser port 8080:"
 
-              if ($port) {
-                  Write-Host "LISTENING"
-              }
-              else {
-                  Write-Host "NOT LISTENING"
-              }
+            $port = Get-NetTCPConnection `
+              -LocalPort 8080 `
+              -State Listen `
+              -ErrorAction SilentlyContinue
 
-              Write-Host ""
-              Write-Host "Android ADB:"
+            if ($port) {
+              Write-Host "LISTENING"
+            }
+            else {
+              Write-Host "NOT LISTENING"
+            }
 
-              $adb = "C:\Android\android-sdk\platform-tools\adb.exe"
+            Write-Host ""
+            Write-Host "Android ADB:"
 
-              if (Test-Path $adb) {
+            $adb = "C:\Android\android-sdk\platform-tools\adb.exe"
 
-                  & $adb devices -l
+            if (Test-Path $adb) {
 
-              }
-              else {
+              & $adb devices -l
 
-                  Write-Host "ADB not found."
+            }
+            else {
 
-              }
+              Write-Host "ADB not found."
 
-              Write-Host ""
-              Write-Host "Emulator process:"
+            }
 
-              Get-Process `
-                  -Name emulator `
-                  -ErrorAction SilentlyContinue |
-                  Select-Object Id,ProcessName,CPU |
-                  Format-Table -AutoSize
+            Write-Host ""
+            Write-Host "Emulator:"
 
-              Start-Sleep -Seconds 60
+            Get-Process `
+              -Name emulator `
+              -ErrorAction SilentlyContinue |
+              Select-Object Id,ProcessName,CPU |
+              Format-Table -AutoSize
+
+            Start-Sleep -Seconds 60
           }
