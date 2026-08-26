@@ -1,4 +1,4 @@
-name: Windows + Android Emulator + Browser
+name: Windows + Android26 Fast RDP
 
 on:
   workflow_dispatch:
@@ -7,29 +7,29 @@ permissions:
   contents: read
 
 jobs:
-  windows-emulator:
+  windows-android:
     runs-on: windows-latest
     timeout-minutes: 360
 
     steps:
 
-      # =====================================================
+      # =========================================================
       # CHECKOUT
-      # =====================================================
+      # =========================================================
 
       - name: Checkout
         uses: actions/checkout@v6
 
-      # =====================================================
+      # =========================================================
       # TAILSCALE
-      # =====================================================
+      # =========================================================
 
       - name: Connect Tailscale
         uses: tailscale/github-action@v4
         with:
           authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
 
-      - name: Verify Tailscale
+      - name: Check Tailscale
         shell: powershell
         run: |
           Write-Host ""
@@ -43,215 +43,92 @@ jobs:
           Write-Host "Tailscale IPv4:"
 
           $ip = (tailscale ip -4).Trim()
-
           Write-Host $ip
 
-      # =====================================================
-      # WINDOWS RDP + NOVNC
-      # =====================================================
+      # =========================================================
+      # WINDOWS RDP
+      # =========================================================
 
       - name: Setup Windows RDP
         shell: powershell
         env:
           RDP_PASSWORD: ${{ secrets.RDP_PASSWORD }}
         run: |
-
-          Write-Host ""
-          Write-Host "============================================================"
-          Write-Host " WINDOWS RDP + NOVNC"
-          Write-Host "============================================================"
-
           if ([string]::IsNullOrWhiteSpace($env:RDP_PASSWORD)) {
             throw "RDP_PASSWORD GitHub Secret is missing."
           }
 
           .\scripts\setup-rdp.ps1
 
-      # =====================================================
-      # CHECK BROWSER SERVICE
-      # =====================================================
-
-      - name: Check noVNC
-        shell: powershell
-        run: |
-
-          Write-Host ""
-          Write-Host "============================================================"
-          Write-Host " NOVNC CHECK"
-          Write-Host "============================================================"
-
-          Write-Host ""
-          Write-Host "Port 8080:"
-
-          $listener = Get-NetTCPConnection `
-            -LocalPort 8080 `
-            -State Listen `
-            -ErrorAction SilentlyContinue
-
-          if ($listener) {
-
-            Write-Host "8080 = LISTENING"
-
-            $listener |
-              Select-Object LocalAddress,LocalPort,State,OwningProcess |
-              Format-Table -AutoSize
-
-          }
-          else {
-
-            Write-Host "8080 = NOT LISTENING"
-
-          }
-
-          Write-Host ""
-          Write-Host "Local HTTP test:"
-
-          try {
-
-            $response = Invoke-WebRequest `
-              -Uri "http://127.0.0.1:8080/vnc.html" `
-              -UseBasicParsing `
-              -TimeoutSec 15
-
-            Write-Host "HTTP STATUS: $($response.StatusCode)"
-
-          }
-          catch {
-
-            Write-Host "LOCAL HTTP FAILED:"
-            Write-Host $_.Exception.Message
-
-          }
-
-      # =====================================================
-      # TAILSCALE SERVE
-      # =====================================================
-
-      - name: Expose noVNC with Tailscale Serve
-        shell: powershell
-        run: |
-
-          Write-Host ""
-          Write-Host "============================================================"
-          Write-Host " TAILSCALE SERVE"
-          Write-Host "============================================================"
-
-          # Remove old Serve configuration
-          tailscale serve reset 2>$null
-
-          Start-Sleep -Seconds 2
-
-          Write-Host ""
-          Write-Host "Starting Tailscale Serve..."
-
-          tailscale serve --bg http://127.0.0.1:8080
-
-          if ($LASTEXITCODE -ne 0) {
-
-            Write-Host ""
-            Write-Host "Tailscale Serve failed."
-
-            Write-Host ""
-            Write-Host "Current Tailscale status:"
-            tailscale status
-
-            Write-Host ""
-            Write-Host "Serve status:"
-            tailscale serve status
-
-            throw "Unable to start Tailscale Serve."
-
-          }
-
-          Start-Sleep -Seconds 5
-
-          Write-Host ""
-          Write-Host "============================================================"
-          Write-Host " TAILSCALE SERVE STATUS"
-          Write-Host "============================================================"
-
-          tailscale serve status
-
-          Write-Host ""
-          Write-Host "Tailscale IP:"
-          tailscale ip -4
-
-      # =====================================================
+      # =========================================================
       # ANDROID EMULATOR
-      # =====================================================
+      # =========================================================
 
       - name: Setup Android Emulator
         shell: powershell
         run: |
-
-          Write-Host ""
-          Write-Host "============================================================"
-          Write-Host " ANDROID EMULATOR"
-          Write-Host "============================================================"
-
           .\scripts\setup-emulator.ps1
 
-      # =====================================================
-      # FINAL ACCESS
-      # =====================================================
+      # =========================================================
+      # FINAL INFORMATION
+      # =========================================================
 
-      - name: Show Final Access
+      - name: Show Access Information
         shell: powershell
         run: |
+
+          $ip = (tailscale ip -4).Trim()
 
           Write-Host ""
           Write-Host "============================================================"
           Write-Host " WINDOWS + ANDROID EMULATOR READY"
           Write-Host "============================================================"
 
-          $ip = (tailscale ip -4).Trim()
+          Write-Host ""
+          Write-Host "RDP:"
+          Write-Host "${ip}:3389"
 
           Write-Host ""
           Write-Host "Tailscale IPv4:"
           Write-Host $ip
 
           Write-Host ""
-          Write-Host "Direct browser:"
-          Write-Host "http://${ip}:8080/vnc.html"
-
-          Write-Host ""
-          Write-Host "Tailscale Serve:"
-          tailscale serve status
-
-          Write-Host ""
-          Write-Host "RDP:"
-          Write-Host "${ip}:3389"
+          Write-Host "Windows:"
+          Write-Host "Chrome installed"
+          Write-Host "Chrome single-window setup"
+          Write-Host "Extensions supported"
 
           Write-Host ""
           Write-Host "Android:"
           Write-Host "Android 8.0 / API 26"
-
-          Write-Host ""
-          Write-Host "AVD:"
-          Write-Host "Android26"
-
-          Write-Host ""
-          Write-Host "Fullscreen:"
-          Write-Host "OFF"
+          Write-Host "AVD: Android26"
+          Write-Host "Fullscreen: OFF"
 
           Write-Host ""
           Write-Host "============================================================"
-          Write-Host " IMPORTANT"
+          Write-Host " CONNECT FROM PHONE"
           Write-Host "============================================================"
 
           Write-Host ""
-          Write-Host "For Chrome, use the HTTPS URL shown by:"
-          Write-Host "tailscale serve status"
+          Write-Host "Open your RDP app and connect to:"
+          Write-Host "${ip}:3389"
 
           Write-Host ""
-          Write-Host "Do NOT use the old :8080 URL if Serve gives"
-          Write-Host "a ts.net HTTPS URL."
+          Write-Host "Username:"
+          Write-Host "runneradmin"
 
-      # =====================================================
-      # KEEP ALIVE
-      # =====================================================
+          Write-Host ""
+          Write-Host "Password:"
+          Write-Host "Your RDP_PASSWORD GitHub Secret"
 
-      - name: Keep session alive
+          Write-Host ""
+          Write-Host "============================================================"
+
+      # =========================================================
+      # KEEP RUNNER ALIVE
+      # =========================================================
+
+      - name: Keep Session Alive
         shell: powershell
         run: |
 
@@ -263,77 +140,68 @@ jobs:
           $ip = (tailscale ip -4).Trim()
 
           Write-Host ""
-          Write-Host "Tailscale IP:"
-          Write-Host $ip
-
-          Write-Host ""
-          Write-Host "Browser:"
-          tailscale serve status
-
-          Write-Host ""
-          Write-Host "RDP:"
-          Write-Host "${ip}:3389"
-
-          Write-Host ""
+          Write-Host "RDP: ${ip}:3389"
+          Write-Host "Android26: RUNNING"
+          Write-Host "Fullscreen: OFF"
 
           while ($true) {
 
-            Write-Host ""
-            Write-Host "------------------------------------------------------------"
-            Write-Host " STATUS"
-            Write-Host "------------------------------------------------------------"
+              Write-Host ""
+              Write-Host "------------------------------------------------------------"
+              Write-Host " STATUS"
+              Write-Host "------------------------------------------------------------"
 
-            Write-Host ""
-            Write-Host "Time:"
-            Get-Date
+              Write-Host ""
+              Write-Host "Time:"
+              Get-Date
 
-            Write-Host ""
-            Write-Host "Tailscale:"
-            tailscale status
+              Write-Host ""
+              Write-Host "Tailscale:"
+              tailscale status
 
-            Write-Host ""
-            Write-Host "Tailscale Serve:"
-            tailscale serve status
+              Write-Host ""
+              Write-Host "Emulator process:"
 
-            Write-Host ""
-            Write-Host "Browser port 8080:"
+              Get-Process emulator `
+                -ErrorAction SilentlyContinue |
+                Select-Object Id,ProcessName,CPU |
+                Format-Table -AutoSize
 
-            $port = Get-NetTCPConnection `
-              -LocalPort 8080 `
-              -State Listen `
-              -ErrorAction SilentlyContinue
+              Write-Host ""
+              Write-Host "Android boot state:"
 
-            if ($port) {
-              Write-Host "LISTENING"
-            }
-            else {
-              Write-Host "NOT LISTENING"
-            }
+              $adb = "C:\Android\android-sdk\platform-tools\adb.exe"
 
-            Write-Host ""
-            Write-Host "Android ADB:"
+              if (Test-Path $adb) {
 
-            $adb = "C:\Android\android-sdk\platform-tools\adb.exe"
+                  $state = & $adb -s emulator-5554 get-state 2>$null
 
-            if (Test-Path $adb) {
+                  if ($LASTEXITCODE -eq 0) {
+                      Write-Host "ADB device: ONLINE"
+                  }
+                  else {
+                      Write-Host "ADB device: NOT READY"
+                  }
 
-              & $adb devices -l
+              }
+              else {
+                  Write-Host "ADB not found"
+              }
 
-            }
-            else {
+              Write-Host ""
+              Write-Host "RDP port:"
 
-              Write-Host "ADB not found."
+              $rdp = Get-NetTCPConnection `
+                -LocalPort 3389 `
+                -State Listen `
+                -ErrorAction SilentlyContinue
 
-            }
+              if ($rdp) {
+                  Write-Host "3389 = LISTENING"
+              }
+              else {
+                  Write-Host "3389 = NOT LISTENING"
+              }
 
-            Write-Host ""
-            Write-Host "Emulator:"
-
-            Get-Process `
-              -Name emulator `
-              -ErrorAction SilentlyContinue |
-              Select-Object Id,ProcessName,CPU |
-              Format-Table -AutoSize
-
-            Start-Sleep -Seconds 60
+              Start-Sleep -Seconds 60
           }
