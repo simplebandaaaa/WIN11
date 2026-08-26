@@ -1,4 +1,4 @@
-name: Windows + Android Emulator RDP
+name: Windows + Android Emulator + Chrome
 
 on:
   workflow_dispatch:
@@ -13,11 +13,7 @@ jobs:
 
     steps:
 
-      # =====================================================
-      # CHECKOUT
-      # =====================================================
-
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v6
 
       # =====================================================
@@ -29,10 +25,6 @@ jobs:
         with:
           authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
 
-      # =====================================================
-      # VERIFY TAILSCALE
-      # =====================================================
-
       - name: Verify Tailscale
         shell: powershell
         run: |
@@ -41,8 +33,6 @@ jobs:
           Write-Host " TAILSCALE"
           Write-Host "=============================================="
 
-          Write-Host ""
-          Write-Host "Tailscale status:"
           tailscale status
 
           Write-Host ""
@@ -50,21 +40,16 @@ jobs:
           tailscale ip -4
 
       # =====================================================
-      # WINDOWS RDP
+      # WINDOWS RDP + BROWSER DISPLAY
       # =====================================================
 
-      - name: Setup Windows RDP
+      - name: Setup Windows RDP and Browser Display
         shell: powershell
         env:
           RDP_PASSWORD: ${{ secrets.RDP_PASSWORD }}
         run: |
-          Write-Host ""
-          Write-Host "=============================================="
-          Write-Host " SETTING UP WINDOWS RDP"
-          Write-Host "=============================================="
-
           if ([string]::IsNullOrWhiteSpace($env:RDP_PASSWORD)) {
-            throw "RDP_PASSWORD environment variable is missing."
+            throw "RDP_PASSWORD is missing."
           }
 
           .\scripts\setup-rdp.ps1
@@ -76,47 +61,38 @@ jobs:
       - name: Setup Android Emulator
         shell: powershell
         run: |
-          Write-Host ""
-          Write-Host "=============================================="
-          Write-Host " SETTING UP ANDROID EMULATOR"
-          Write-Host "=============================================="
-
           .\scripts\setup-emulator.ps1
 
       # =====================================================
-      # FINAL CONNECTION INFO
+      # SHOW ACCESS INFO
       # =====================================================
 
-      - name: Show connection information
+      - name: Show Browser Access
         shell: powershell
         run: |
           Write-Host ""
           Write-Host "============================================================"
-          Write-Host " CONNECTION INFORMATION"
+          Write-Host " WINDOWS + ANDROID EMULATOR READY"
           Write-Host "============================================================"
 
-          Write-Host ""
-          Write-Host "Tailscale IPv4:"
-          tailscale ip -4
+          $ip = tailscale ip -4
 
           Write-Host ""
-          Write-Host "Tailscale status:"
-          tailscale status
+          Write-Host "Chrome URL:"
+          Write-Host "http://${ip}:8080"
 
           Write-Host ""
-          Write-Host "Windows hostname:"
-          hostname
+          Write-Host "RDP:"
+          Write-Host "${ip}:3389"
 
           Write-Host ""
-          Write-Host "RDP port:"
-          Write-Host "3389"
+          Write-Host "Tailscale IP:"
+          Write-Host $ip
 
           Write-Host ""
-          Write-Host "Android Emulator:"
+          Write-Host "Android:"
+          Write-Host "Android 8.0 / API 26"
           Write-Host "AVD: Android26"
-          Write-Host "Android: 8.0 / API 26"
-          Write-Host "ABI: x86"
-          Write-Host "Resolution: 600x960"
           Write-Host "Fullscreen: OFF"
 
       # =====================================================
@@ -128,21 +104,22 @@ jobs:
         run: |
           Write-Host ""
           Write-Host "============================================================"
-          Write-Host " WINDOWS + ANDROID EMULATOR READY"
+          Write-Host " SESSION ACTIVE"
           Write-Host "============================================================"
 
+          $ip = tailscale ip -4
+
           Write-Host ""
-          Write-Host "Connect to the Tailscale IPv4 address shown above."
-          Write-Host "RDP port: 3389"
+          Write-Host "Open in Chrome:"
+          Write-Host "http://${ip}:8080"
+
+          Write-Host ""
 
           while ($true) {
 
             Write-Host ""
-            Write-Host "============================================================"
-            Write-Host " STATUS"
-            Write-Host "============================================================"
+            Write-Host "---------------- STATUS ----------------"
 
-            Write-Host ""
             Write-Host "Time:"
             Get-Date
 
@@ -151,21 +128,18 @@ jobs:
             tailscale status
 
             Write-Host ""
-            Write-Host "Tailscale IPv4:"
+            Write-Host "Tailscale IP:"
             tailscale ip -4
 
             Write-Host ""
             Write-Host "RDP service:"
 
-            $rdpService = Get-Service `
+            $svc = Get-Service `
               -Name TermService `
               -ErrorAction SilentlyContinue
 
-            if ($rdpService) {
-              Write-Host "Status: $($rdpService.Status)"
-            }
-            else {
-              Write-Host "TermService not found."
+            if ($svc) {
+              Write-Host $svc.Status
             }
 
             Write-Host ""
@@ -176,30 +150,29 @@ jobs:
             if (Test-Path $adb) {
               & $adb devices -l
             }
-            else {
-              Write-Host "ADB not found."
-            }
 
             Write-Host ""
-            Write-Host "Emulator process:"
+            Write-Host "Emulator:"
 
-            $emulatorProcesses = Get-Process `
+            Get-Process `
               -Name emulator `
+              -ErrorAction SilentlyContinue |
+              Select-Object Id, ProcessName, CPU |
+              Format-Table -AutoSize
+
+            Write-Host ""
+            Write-Host "Browser port 8080:"
+
+            $port = Get-NetTCPConnection `
+              -LocalPort 8080 `
+              -State Listen `
               -ErrorAction SilentlyContinue
 
-            if ($emulatorProcesses) {
-
-              $emulatorProcesses |
-                Select-Object `
-                  Id,
-                  ProcessName,
-                  CPU |
-                Format-Table -AutoSize
-
+            if ($port) {
+              Write-Host "LISTENING"
             }
             else {
-
-              Write-Host "Emulator process not found."
+              Write-Host "NOT LISTENING"
             }
 
             Start-Sleep -Seconds 60
