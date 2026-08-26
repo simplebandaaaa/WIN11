@@ -1,315 +1,240 @@
 $ErrorActionPreference = "Stop"
 
+$work = "C:\Android\android-emulator-container-scripts"
+$repo = "https://github.com/google/android-emulator-container-scripts.git"
+
+$gateway = Join-Path $work "gateway"
+$venv = Join-Path $gateway "venv"
+
+$gatewayPort = 8080
+$grpcPort = 8556
+
 Write-Host ""
 Write-Host "============================================================"
-Write-Host " WINDOWS RDP + CHROME SETUP"
+Write-Host " ANDROID EMULATOR WEBRTC GATEWAY"
 Write-Host "============================================================"
 
-# =============================================================
-# VARIABLES
-# =============================================================
+# ------------------------------------------------------------
+# Requirements
+# ------------------------------------------------------------
 
-$password = $env:RDP_PASSWORD
+$python = Get-Command python -ErrorAction SilentlyContinue
 
-if ([string]::IsNullOrWhiteSpace($password)) {
-    throw "RDP_PASSWORD GitHub Secret is missing."
+if (-not $python) {
+    throw "Python is required. Install Python 3.10+ on the runner."
 }
 
-$user = "runneradmin"
+$git = Get-Command git -ErrorAction SilentlyContinue
 
-# =============================================================
-# FIND USER
-# =============================================================
+if (-not $git) {
+    throw "Git is required on the runner."
+}
+
+$pythonVersion = & python --version 2>&1
 
 Write-Host ""
-Write-Host "Checking Windows user..."
+Write-Host "Python:"
+Write-Host $pythonVersion
 
-$localUser = Get-LocalUser `
-    -Name $user `
-    -ErrorAction SilentlyContinue
+# ------------------------------------------------------------
+# Clone/update official Google repository
+# ------------------------------------------------------------
 
-if (-not $localUser) {
+if (-not (Test-Path $work)) {
 
-    Write-Host "Creating $user..."
+    Write-Host ""
+    Write-Host "Cloning official Google WebRTC gateway..."
 
-    $securePassword = ConvertTo-SecureString `
-        $password `
-        -AsPlainText `
-        -Force
+    & git clone --depth 1 $repo $work
 
-    New-LocalUser `
-        -Name $user `
-        -Password $securePassword `
-        -AccountNeverExpires `
-        -PasswordNeverExpires `
-        -UserMayNotChangePassword `
-        -Description "GitHub Android Emulator RDP user"
+    if ($LASTEXITCODE -ne 0) {
+        throw "Git clone failed."
+    }
 
 }
 else {
 
-    Write-Host "$user already exists."
+    Write-Host ""
+    Write-Host "Google gateway repository already exists."
 
-    $securePassword = ConvertTo-SecureString `
-        $password `
-        -AsPlainText `
-        -Force
+    Push-Location $work
 
-    Set-LocalUser `
-        -Name $user `
-        -Password $securePassword
-}
-
-# =============================================================
-# ADMINISTRATOR
-# =============================================================
-
-Write-Host ""
-Write-Host "Adding user to Administrators..."
-
-try {
-    Add-LocalGroupMember `
-        -Group "Administrators" `
-        -Member $user `
-        -ErrorAction SilentlyContinue
-}
-catch {
-}
-
-# =============================================================
-# REMOTE DESKTOP USERS
-# =============================================================
-
-Write-Host ""
-Write-Host "Adding user to Remote Desktop Users..."
-
-try {
-    Add-LocalGroupMember `
-        -Group "Remote Desktop Users" `
-        -Member $user `
-        -ErrorAction SilentlyContinue
-}
-catch {
-}
-
-# =============================================================
-# ENABLE RDP
-# =============================================================
-
-Write-Host ""
-Write-Host "Enabling Windows Remote Desktop..."
-
-Set-ItemProperty `
-    -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" `
-    -Name "fDenyTSConnections" `
-    -Value 0
-
-# =============================================================
-# NETWORK LEVEL AUTHENTICATION
-# =============================================================
-
-Write-Host ""
-Write-Host "Configuring RDP..."
-
-Set-ItemProperty `
-    -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" `
-    -Name "UserAuthentication" `
-    -Value 0
-
-# =============================================================
-# RDP SERVICE
-# =============================================================
-
-Write-Host ""
-Write-Host "Starting Remote Desktop service..."
-
-Set-Service `
-    -Name TermService `
-    -StartupType Automatic
-
-Restart-Service `
-    -Name TermService `
-    -Force `
-    -ErrorAction SilentlyContinue
-
-# =============================================================
-# FIREWALL
-# =============================================================
-
-Write-Host ""
-Write-Host "Opening RDP firewall..."
-
-Enable-NetFirewallRule `
-    -DisplayGroup "Remote Desktop" `
-    -ErrorAction SilentlyContinue
-
-New-NetFirewallRule `
-    -DisplayName "GitHub RDP 3389" `
-    -Direction Inbound `
-    -Protocol TCP `
-    -LocalPort 3389 `
-    -Action Allow `
-    -Profile Any `
-    -ErrorAction SilentlyContinue
-
-# =============================================================
-# FAST RDP SETTINGS
-# =============================================================
-
-Write-Host ""
-Write-Host "Applying fast RDP settings..."
-
-$rdpKey = `
-"HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp"
-
-Set-ItemProperty `
-    -Path $rdpKey `
-    -Name "fDisableWallpaper" `
-    -Value 1 `
-    -ErrorAction SilentlyContinue
-
-Set-ItemProperty `
-    -Path $rdpKey `
-    -Name "fDisableFullWindowDrag" `
-    -Value 1 `
-    -ErrorAction SilentlyContinue
-
-Set-ItemProperty `
-    -Path $rdpKey `
-    -Name "fDisableMenuAnims" `
-    -Value 1 `
-    -ErrorAction SilentlyContinue
-
-Set-ItemProperty `
-    -Path $rdpKey `
-    -Name "fDisableThemes" `
-    -Value 1 `
-    -ErrorAction SilentlyContinue
-
-# =============================================================
-# CHROME
-# =============================================================
-
-Write-Host ""
-Write-Host "Checking Google Chrome..."
-
-$chromePaths = @(
-    "C:\Program Files\Google\Chrome\Application\chrome.exe",
-    "C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-    "$env:LOCALAPPDATA\Google\Chrome\Application\chrome.exe"
-)
-
-$chrome = $null
-
-foreach ($path in $chromePaths) {
-
-    if (Test-Path $path) {
-        $chrome = $path
-        break
+    try {
+        & git pull --ff-only
+    }
+    finally {
+        Pop-Location
     }
 }
 
-if ($chrome) {
-
-    Write-Host "Chrome found:"
-    Write-Host $chrome
-
-}
-else {
-
-    Write-Host "Chrome not found."
-    Write-Host "Installing Chrome..."
-
-    $installer = "$env:TEMP\ChromeSetup.exe"
-
-    Invoke-WebRequest `
-        -Uri "https://dl.google.com/chrome/install/latest/chrome_installer.exe" `
-        -OutFile $installer
-
-    Start-Process `
-        -FilePath $installer `
-        -ArgumentList "/silent","/install" `
-        -Wait
-
-    Remove-Item `
-        $installer `
-        -Force `
-        -ErrorAction SilentlyContinue
+if (-not (Test-Path $gateway)) {
+    throw "Gateway directory not found: $gateway"
 }
 
-# =============================================================
-# CHROME SINGLE WINDOW
-# =============================================================
+# ------------------------------------------------------------
+# IMPORTANT WINDOWS CHECK
+# ------------------------------------------------------------
 
 Write-Host ""
-Write-Host "Configuring Chrome..."
+Write-Host "Checking gateway platform..."
 
-$chromePolicyPath = `
-"HKLM:\SOFTWARE\Policies\Google\Chrome"
+if ($env:OS -eq "Windows_NT") {
 
-New-Item `
-    -Path $chromePolicyPath `
-    -Force `
-    | Out-Null
+    Write-Host ""
+    Write-Host "============================================================"
+    Write-Host " WINDOWS RUNNER DETECTED"
+    Write-Host "============================================================"
 
-# Don't restore previous tabs
-New-ItemProperty `
-    -Path $chromePolicyPath `
-    -Name "RestoreOnStartup" `
-    -PropertyType DWord `
-    -Value 4 `
-    -Force `
-    | Out-Null
+    Write-Host ""
+    Write-Host "The official Google gateway is currently documented"
+    Write-Host "for Linux environments."
+    Write-Host ""
+    Write-Host "A Windows-native gateway launch is therefore NOT"
+    Write-Host "attempted here."
+    Write-Host ""
 
-# =============================================================
-# RDP PORT TEST
-# =============================================================
+    throw @"
+The Android Emulator WebRTC gateway is Linux-oriented in the
+official Google implementation.
+
+Your Windows emulator can expose gRPC, but this PowerShell
+script cannot safely pretend that the Python gateway is a
+supported native Windows service.
+
+Run the gateway inside WSL2/Linux, while keeping your existing
+RDP/Tailscale Windows setup.
+"@
+}
+
+# ------------------------------------------------------------
+# Linux path
+# ------------------------------------------------------------
 
 Write-Host ""
-Write-Host "Checking RDP port..."
+Write-Host "Creating Python virtual environment..."
 
-Start-Sleep -Seconds 3
+if (-not (Test-Path $venv)) {
+    & python -m venv $venv
 
-$rdpListener = Get-NetTCPConnection `
-    -LocalPort 3389 `
-    -State Listen `
+    if ($LASTEXITCODE -ne 0) {
+        throw "Python virtual environment creation failed."
+    }
+}
+
+$pythonVenv = Join-Path $venv "bin\python"
+
+if (-not (Test-Path $pythonVenv)) {
+    $pythonVenv = Join-Path $venv "Scripts\python.exe"
+}
+
+if (-not (Test-Path $pythonVenv)) {
+    throw "Virtual environment Python executable not found."
+}
+
+Write-Host ""
+Write-Host "Installing gateway..."
+
+Push-Location $gateway
+
+try {
+
+    & $pythonVenv -m pip install --upgrade pip
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "pip upgrade failed."
+    }
+
+    & $pythonVenv -m pip install -e .
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "Gateway installation failed."
+    }
+
+}
+finally {
+    Pop-Location
+}
+
+# ------------------------------------------------------------
+# Locate emulator discovery file
+# ------------------------------------------------------------
+
+Write-Host ""
+Write-Host "Searching for emulator discovery file..."
+
+$home = $env:HOME
+
+if (-not $home) {
+    $home = $env:USERPROFILE
+}
+
+$runningDir = Join-Path $home ".android\avd\running"
+
+$discovery = Get-ChildItem `
+    -Path $runningDir `
+    -Filter "pid_*.ini" `
+    -File `
+    -ErrorAction SilentlyContinue |
+    Select-Object -First 1
+
+if (-not $discovery) {
+
+    Write-Host ""
+    Write-Host "No running emulator discovery file found."
+
+    Write-Host ""
+    Write-Host "Expected directory:"
+    Write-Host $runningDir
+
+    throw "Start Android26 before starting the WebRTC gateway."
+}
+
+$discoveryPath = $discovery.FullName
+
+Write-Host ""
+Write-Host "Discovery:"
+Write-Host $discoveryPath
+
+# ------------------------------------------------------------
+# Gateway
+# ------------------------------------------------------------
+
+$gatewayExe = Get-Command `
+    videobridge-gateway `
     -ErrorAction SilentlyContinue
 
-if ($rdpListener) {
+if (-not $gatewayExe) {
 
-    Write-Host "RDP 3389 = LISTENING"
+    $gatewayExePath = Join-Path `
+        (Split-Path $pythonVenv) `
+        "videobridge-gateway.exe"
 
+    if (Test-Path $gatewayExePath) {
+        $gatewayExe = $gatewayExePath
+    }
+    else {
+        throw "videobridge-gateway executable was not installed."
+    }
 }
-else {
-
-    Write-Host "WARNING: RDP 3389 is not listening yet."
-
-}
-
-# =============================================================
-# FINAL
-# =============================================================
 
 Write-Host ""
 Write-Host "============================================================"
-Write-Host " WINDOWS RDP READY"
+Write-Host " STARTING WEBRTC GATEWAY"
 Write-Host "============================================================"
 
 Write-Host ""
-Write-Host "Username:"
-Write-Host $user
+Write-Host "Gateway:"
+Write-Host "127.0.0.1:$gatewayPort"
 
 Write-Host ""
-Write-Host "RDP port:"
-Write-Host "3389"
+Write-Host "Emulator gRPC:"
+Write-Host "127.0.0.1:$grpcPort"
 
 Write-Host ""
-Write-Host "Chrome:"
-Write-Host "READY"
+Write-Host "Browser frontend:"
+Write-Host "https://pokowaka.github.io/android-emulator-webrtc/?url=localhost:$gatewayPort"
 
-Write-Host ""
-Write-Host "Fullscreen:"
-Write-Host "OFF"
-
-Write-Host ""
-Write-Host "============================================================"
+& $gatewayExe `
+    "--port=$gatewayPort" `
+    "--discovery_file=$discoveryPath" `
+    "--webrtc_log_level=warning"
