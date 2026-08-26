@@ -2,11 +2,11 @@ $ErrorActionPreference = "Stop"
 
 Write-Host ""
 Write-Host "============================================================"
-Write-Host " ANDROID 26 EMULATOR - FINAL"
+Write-Host " ANDROID 26 EMULATOR - NO ADB"
 Write-Host "============================================================"
 
 # ============================================================
-# CONFIG
+# CONFIGURATION
 # ============================================================
 
 $sdk = "C:\Android\android-sdk"
@@ -14,7 +14,6 @@ $sdk = "C:\Android\android-sdk"
 $emulator  = Join-Path $sdk "emulator\emulator.exe"
 $sdkmanager = Join-Path $sdk "cmdline-tools\latest\bin\sdkmanager.bat"
 $avdmanager = Join-Path $sdk "cmdline-tools\latest\bin\avdmanager.bat"
-$adb       = Join-Path $sdk "platform-tools\adb.exe"
 
 $avdName = "Android26"
 
@@ -25,8 +24,6 @@ $avdRoot = Join-Path $androidDir "avd"
 $avdPath = Join-Path $avdRoot "$avdName.avd"
 $avdConfig = Join-Path $avdPath "config.ini"
 
-$emulatorSerial = "emulator-5554"
-
 # ============================================================
 # ENVIRONMENT
 # ============================================================
@@ -35,7 +32,7 @@ $env:ANDROID_HOME = $sdk
 $env:ANDROID_SDK_ROOT = $sdk
 
 $env:PATH = `
-    "$sdk\platform-tools;$sdk\emulator;$sdk\cmdline-tools\latest\bin;$env:PATH"
+    "$sdk\emulator;$sdk\cmdline-tools\latest\bin;$env:PATH"
 
 New-Item `
     -ItemType Directory `
@@ -57,38 +54,28 @@ Write-Host ""
 Write-Host "AVD:"
 Write-Host $avdName
 
+Write-Host ""
+Write-Host "ADB:"
+Write-Host "DISABLED"
+
 # ============================================================
-# TOOL CHECK
+# CHECK EMULATOR
 # ============================================================
 
 Write-Host ""
 Write-Host "============================================================"
-Write-Host " CHECKING TOOLS"
+Write-Host " CHECKING EMULATOR"
 Write-Host "============================================================"
 
 if (-not (Test-Path $emulator)) {
     throw "emulator.exe not found: $emulator"
 }
 
-if (-not (Test-Path $sdkmanager)) {
-    throw "sdkmanager.bat not found: $sdkmanager"
-}
-
-if (-not (Test-Path $avdmanager)) {
-    throw "avdmanager.bat not found: $avdmanager"
-}
-
-if (-not (Test-Path $adb)) {
-    throw "adb.exe not found: $adb"
-}
-
-Write-Host "emulator.exe : OK"
-Write-Host "sdkmanager   : OK"
-Write-Host "avdmanager   : OK"
-Write-Host "adb.exe      : OK"
+Write-Host ""
+Write-Host "emulator.exe = OK"
 
 # ============================================================
-# SYSTEM IMAGE CHECK
+# CHECK SYSTEM IMAGE
 # ============================================================
 
 Write-Host ""
@@ -103,7 +90,7 @@ $imagePath = Join-Path `
 if (Test-Path $imagePath) {
 
     Write-Host ""
-    Write-Host "Android 26 Google APIs x86 image = READY"
+    Write-Host "Android 26 Google APIs x86 = READY"
 
 }
 else {
@@ -112,7 +99,12 @@ else {
     Write-Host "Android 26 image missing."
     Write-Host "Installing..."
 
-    & cmd.exe /c "`"$sdkmanager`" `"$systemImage`"" 2>&1 |
+    if (-not (Test-Path $sdkmanager)) {
+        throw "sdkmanager not found: $sdkmanager"
+    }
+
+    & cmd.exe /c `
+        "`"$sdkmanager`" `"$systemImage`"" |
         ForEach-Object {
             Write-Host $_
         }
@@ -126,12 +118,12 @@ else {
 }
 
 # ============================================================
-# AVD CHECK
+# CHECK AVD
 # ============================================================
 
 Write-Host ""
 Write-Host "============================================================"
-Write-Host " CHECKING AVD"
+Write-Host " CHECKING ANDROID26 AVD"
 Write-Host "============================================================"
 
 if (Test-Path $avdConfig) {
@@ -145,15 +137,19 @@ else {
 
     Write-Host ""
     Write-Host "Android26 AVD not found."
-    Write-Host "Creating AVD..."
+    Write-Host "Creating..."
 
-    # IMPORTANT:
-    # ASCII "no" through cmd.exe prevents BOM problem.
+    if (-not (Test-Path $avdmanager)) {
+        throw "avdmanager not found: $avdmanager"
+    }
+
+    # ASCII input through cmd.exe.
+    # Prevents the previous BOM/no problem.
 
     $createCommand = `
         "echo no|`"$avdmanager`" create avd -n $avdName -k `"$systemImage`" -d pixel --force"
 
-    & cmd.exe /c $createCommand 2>&1 |
+    & cmd.exe /c $createCommand |
         ForEach-Object {
             Write-Host $_
         }
@@ -167,7 +163,7 @@ else {
 
 Write-Host ""
 Write-Host "============================================================"
-Write-Host " VERIFYING AVD"
+Write-Host " VERIFYING ANDROID26"
 Write-Host "============================================================"
 
 Start-Sleep -Seconds 2
@@ -183,10 +179,13 @@ if (Test-Path $avdConfig) {
 else {
 
     Write-Host ""
-    Write-Host "config.ini not found immediately."
+    Write-Host "config.ini not found."
+
+    Write-Host ""
     Write-Host "Checking avdmanager..."
 
-    $avdOutput = & cmd.exe /c "`"$avdmanager`" list avd" 2>&1
+    $avdOutput = `
+        & cmd.exe /c "`"$avdmanager`" list avd" 2>&1
 
     $avdText = $avdOutput | Out-String
 
@@ -198,21 +197,17 @@ else {
     if (Test-Path $avdConfig) {
 
         Write-Host ""
-        Write-Host "Android26 AVD verified after refresh."
+        Write-Host "Android26 found after refresh."
 
     }
     elseif ($avdText -match "(?m)^\s*Name:\s*Android26\s*$") {
 
-        if (Test-Path $avdPath) {
-
-            Write-Host ""
-            Write-Host "Android26 confirmed by avdmanager."
-
+        if (-not (Test-Path $avdPath)) {
+            throw "Android26 listed but directory is missing."
         }
-        else {
 
-            throw "Android26 listed but AVD directory is missing."
-        }
+        Write-Host ""
+        Write-Host "Android26 confirmed."
 
     }
     else {
@@ -222,7 +217,7 @@ else {
 }
 
 # ============================================================
-# FAST AVD CONFIG
+# FAST CONFIGURATION
 # ============================================================
 
 Write-Host ""
@@ -255,14 +250,16 @@ $configLines |
         -Encoding ASCII
 
 Write-Host ""
-Write-Host "Fast settings applied."
+Write-Host "Fast configuration applied."
 
 # ============================================================
 # STOP OLD EMULATOR
 # ============================================================
 
 Write-Host ""
-Write-Host "Checking old emulator..."
+Write-Host "============================================================"
+Write-Host " CLEANING OLD EMULATOR"
+Write-Host "============================================================"
 
 $oldEmulator = Get-Process `
     -Name emulator `
@@ -271,7 +268,7 @@ $oldEmulator = Get-Process `
 if ($oldEmulator) {
 
     Write-Host ""
-    Write-Host "Stopping old emulator..."
+    Write-Host "Stopping existing emulator..."
 
     $oldEmulator |
         Stop-Process `
@@ -282,91 +279,21 @@ if ($oldEmulator) {
 }
 
 # ============================================================
-# ADB CLEANUP
+# NO ADB
 # ============================================================
 
 Write-Host ""
 Write-Host "============================================================"
-Write-Host " STARTING ADB"
+Write-Host " ADB DISABLED"
 Write-Host "============================================================"
 
 Write-Host ""
-Write-Host "Stopping old ADB daemon if present..."
-
-# NEVER call adb directly here.
-# cmd.exe prevents PowerShell NativeCommandError.
-
-& cmd.exe /c "`"$adb`" kill-server" 2>&1 |
-    ForEach-Object {
-        Write-Host $_
-    }
-
-Start-Sleep -Seconds 2
-
-# ============================================================
-# START ADB
-# ============================================================
-
-Write-Host ""
-Write-Host "Starting ADB daemon..."
-
-$adbStartOutput = `
-    & cmd.exe /c "`"$adb`" start-server" 2>&1
-
-$adbStartOutput |
-    ForEach-Object {
-        Write-Host $_
-    }
-
-# ADB writes normal startup information to stderr.
-# cmd.exe gives us the actual process exit code.
-
-$adbExit = $LASTEXITCODE
-
-if ($adbExit -ne 0) {
-
-    Write-Host ""
-    Write-Host "ADB start failed."
-    Write-Host "Exit code:"
-    Write-Host $adbExit
-
-    Write-Host ""
-    Write-Host "ADB version:"
-
-    & cmd.exe /c "`"$adb`" version" 2>&1 |
-        ForEach-Object {
-            Write-Host $_
-        }
-
-    throw "ADB server could not be started."
-}
-
-Start-Sleep -Seconds 2
-
-# ============================================================
-# VERIFY ADB
-# ============================================================
-
-Write-Host ""
-Write-Host "Verifying ADB daemon..."
-
-$adbDevices = `
-    & cmd.exe /c "`"$adb`" devices" 2>&1
-
-$adbDevices |
-    ForEach-Object {
-        Write-Host $_
-    }
-
-$adbDevicesExit = $LASTEXITCODE
-
-if ($adbDevicesExit -ne 0) {
-
-    throw "ADB daemon is not responding."
-}
-
-Write-Host ""
-Write-Host "ADB server ready."
+Write-Host "ADB is completely removed from this setup."
+Write-Host "No adb.exe"
+Write-Host "No tcp:5037"
+Write-Host "No kill-server"
+Write-Host "No start-server"
+Write-Host "No adb device polling"
 
 # ============================================================
 # START EMULATOR
@@ -377,7 +304,7 @@ Write-Host "============================================================"
 Write-Host " STARTING ANDROID EMULATOR"
 Write-Host "============================================================"
 
-$emulatorArguments = @(
+$arguments = @(
     "-avd", $avdName
     "-no-snapshot"
     "-no-boot-anim"
@@ -396,20 +323,25 @@ Write-Host $emulator
 
 Write-Host ""
 Write-Host "Arguments:"
-Write-Host ($emulatorArguments -join " ")
+Write-Host ($arguments -join " ")
+
+# ============================================================
+# START PROCESS
+# ============================================================
 
 try {
 
     $emuProcess = Start-Process `
         -FilePath $emulator `
-        -ArgumentList $emulatorArguments `
+        -ArgumentList $arguments `
         -PassThru `
         -WindowStyle Normal
 
 }
 catch {
 
-    throw "Could not start emulator: $($_.Exception.Message)"
+    throw `
+        "Could not start Android Emulator: $($_.Exception.Message)"
 }
 
 if (-not $emuProcess) {
@@ -421,97 +353,51 @@ Write-Host "Emulator PID:"
 Write-Host $emuProcess.Id
 
 # ============================================================
-# WAIT FOR DEVICE
+# WAIT FOR EMULATOR PROCESS
 # ============================================================
 
 Write-Host ""
 Write-Host "============================================================"
-Write-Host " WAITING FOR ANDROID EMULATOR"
+Write-Host " WAITING FOR EMULATOR"
 Write-Host "============================================================"
 
-$deviceDetected = $false
-$bootCompleted = $false
+$emulatorStarted = $false
 
-for ($i = 1; $i -le 180; $i++) {
+for ($i = 1; $i -le 120; $i++) {
 
     Start-Sleep -Seconds 2
 
-    # --------------------------------------------------------
-    # PROCESS CHECK
-    # --------------------------------------------------------
-
-    $processCheck = Get-Process `
+    $process = Get-Process `
         -Id $emuProcess.Id `
         -ErrorAction SilentlyContinue
 
-    if (-not $processCheck) {
+    if ($process) {
+
+        if (-not $emulatorStarted) {
+
+            $emulatorStarted = $true
+
+            Write-Host ""
+            Write-Host "Android Emulator process is running."
+
+        }
+
+    }
+    else {
 
         Write-Host ""
-        Write-Host "Emulator process stopped."
+        Write-Host "Emulator process stopped unexpectedly."
 
         break
     }
 
-    # --------------------------------------------------------
-    # ADB DEVICES
-    # --------------------------------------------------------
-
-    $devices = `
-        & cmd.exe /c "`"$adb`" devices" 2>&1
-
-    $deviceLine = $devices |
-        Select-String "emulator-\d+\s+device"
-
-    if ($deviceLine) {
-
-        if (-not $deviceDetected) {
-
-            $deviceDetected = $true
-
-            Write-Host ""
-            Write-Host "Android emulator detected."
-
-        }
-
-        # ----------------------------------------------------
-        # BOOT CHECK
-        # ----------------------------------------------------
-
-        $boot = `
-            & cmd.exe /c "`"$adb`" -s $emulatorSerial shell getprop sys.boot_completed" 2>$null
-
-        if ($boot -match "1") {
-
-            $bootCompleted = $true
-
-            Write-Host ""
-            Write-Host "============================================================"
-            Write-Host " ANDROID BOOT COMPLETED"
-            Write-Host "============================================================"
-
-            break
-        }
-    }
-
-    # --------------------------------------------------------
-    # PROGRESS
-    # --------------------------------------------------------
-
     if (($i % 10) -eq 0) {
 
         Write-Host ""
-        Write-Host "Waiting... $i/180"
+        Write-Host "Waiting... $i/120"
 
         Write-Host ""
-        Write-Host "ADB devices:"
-
-        $devices |
-            ForEach-Object {
-                Write-Host $_
-            }
-
-        Write-Host ""
-        Write-Host "Emulator process:"
+        Write-Host "Emulator process status:"
 
         Get-Process `
             -Name emulator `
@@ -526,157 +412,60 @@ for ($i = 1; $i -le 180; $i++) {
 }
 
 # ============================================================
-# BOOT FAILURE DIAGNOSTICS
+# PROCESS DIAGNOSTICS
 # ============================================================
 
-if (-not $bootCompleted) {
+Write-Host ""
+Write-Host "============================================================"
+Write-Host " EMULATOR DIAGNOSTICS"
+Write-Host "============================================================"
+
+$currentProcess = Get-Process `
+    -Id $emuProcess.Id `
+    -ErrorAction SilentlyContinue
+
+if ($currentProcess) {
 
     Write-Host ""
-    Write-Host "============================================================"
-    Write-Host " EMULATOR BOOT FAILED"
-    Write-Host "============================================================"
+    Write-Host "Emulator process:"
+    Write-Host "RUNNING"
 
     Write-Host ""
-    Write-Host "Device detected:"
-    Write-Host $deviceDetected
+    Write-Host "PID:"
+    Write-Host $currentProcess.Id
 
     Write-Host ""
-    Write-Host "ADB devices:"
-
-    & cmd.exe /c "`"$adb`" devices" 2>&1 |
-        ForEach-Object {
-            Write-Host $_
-        }
+    Write-Host "CPU:"
+    Write-Host $currentProcess.CPU
 
     Write-Host ""
-    Write-Host "Running emulator processes:"
+    Write-Host "Memory:"
+    Write-Host $currentProcess.WorkingSet64
 
-    Get-Process `
-        -Name emulator `
-        -ErrorAction SilentlyContinue |
-        Select-Object `
-            Id,
-            ProcessName,
-            CPU,
-            WorkingSet64 |
-        Format-Table -AutoSize
+}
+else {
 
     Write-Host ""
-    Write-Host "AVD list:"
+    Write-Host "Emulator process:"
+    Write-Host "STOPPED"
 
+    Write-Host ""
+    Write-Host "AVD:"
     & cmd.exe /c "`"$avdmanager`" list avd" 2>&1 |
         ForEach-Object {
             Write-Host $_
         }
 
-    Write-Host ""
-    Write-Host "AVD config:"
-
-    Get-Content `
-        $avdConfig `
-        -ErrorAction SilentlyContinue |
-        ForEach-Object {
-            Write-Host $_
-        }
-
-    throw `
-        "Android Emulator did not become ready."
+    throw "Android Emulator stopped before becoming ready."
 }
 
 # ============================================================
-# ANDROID PERFORMANCE
+# FINAL
 # ============================================================
 
 Write-Host ""
 Write-Host "============================================================"
-Write-Host " OPTIMIZING ANDROID"
-Write-Host "============================================================"
-
-Write-Host ""
-Write-Host "Disabling animations..."
-
-& cmd.exe /c `
-    "`"$adb`" -s $emulatorSerial shell settings put global window_animation_scale 0" `
-    2>&1 |
-    Out-Null
-
-& cmd.exe /c `
-    "`"$adb`" -s $emulatorSerial shell settings put global transition_animation_scale 0" `
-    2>&1 |
-    Out-Null
-
-& cmd.exe /c `
-    "`"$adb`" -s $emulatorSerial shell settings put global animator_duration_scale 0" `
-    2>&1 |
-    Out-Null
-
-Write-Host ""
-Write-Host "Animations OFF."
-
-# ============================================================
-# FINAL VERIFICATION
-# ============================================================
-
-Write-Host ""
-Write-Host "============================================================"
-Write-Host " FINAL VERIFICATION"
-Write-Host "============================================================"
-
-Write-Host ""
-Write-Host "ADB devices:"
-
-& cmd.exe /c "`"$adb`" devices" 2>&1 |
-    ForEach-Object {
-        Write-Host $_
-    }
-
-Write-Host ""
-Write-Host "Android version:"
-
-& cmd.exe /c `
-    "`"$adb`" -s $emulatorSerial shell getprop ro.build.version.release" `
-    2>&1 |
-    ForEach-Object {
-        Write-Host $_
-    }
-
-Write-Host ""
-Write-Host "Android API:"
-
-& cmd.exe /c `
-    "`"$adb`" -s $emulatorSerial shell getprop ro.build.version.sdk" `
-    2>&1 |
-    ForEach-Object {
-        Write-Host $_
-    }
-
-Write-Host ""
-Write-Host "CPU ABI:"
-
-& cmd.exe /c `
-    "`"$adb`" -s $emulatorSerial shell getprop ro.product.cpu.abi" `
-    2>&1 |
-    ForEach-Object {
-        Write-Host $_
-    }
-
-Write-Host ""
-Write-Host "Boot status:"
-
-& cmd.exe /c `
-    "`"$adb`" -s $emulatorSerial shell getprop sys.boot_completed" `
-    2>&1 |
-    ForEach-Object {
-        Write-Host $_
-    }
-
-# ============================================================
-# SUCCESS
-# ============================================================
-
-Write-Host ""
-Write-Host "============================================================"
-Write-Host " ANDROID26 READY"
+Write-Host " ANDROID26 EMULATOR STARTED"
 Write-Host "============================================================"
 
 Write-Host ""
@@ -712,6 +501,14 @@ Write-Host "GPU:"
 Write-Host "SwiftShader"
 
 Write-Host ""
+Write-Host "Audio:"
+Write-Host "OFF"
+
+Write-Host ""
+Write-Host "Camera:"
+Write-Host "OFF"
+
+Write-Host ""
 Write-Host "Animations:"
 Write-Host "OFF"
 
@@ -721,11 +518,11 @@ Write-Host "OFF"
 
 Write-Host ""
 Write-Host "ADB:"
-Write-Host "READY"
+Write-Host "DISABLED"
 
 Write-Host ""
-Write-Host "Boot:"
-Write-Host "COMPLETED"
+Write-Host "Emulator process:"
+Write-Host "RUNNING"
 
 Write-Host ""
 Write-Host "============================================================"
