@@ -21,7 +21,9 @@ jobs:
       - name: Configure Windows RDP
         shell: pwsh
         run: |
-          Write-Host "=== Configuring RDP ==="
+          $ErrorActionPreference = "Stop"
+
+          Write-Host "=== Configuring Windows RDP ==="
 
           Set-ItemProperty `
             -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
@@ -51,10 +53,16 @@ jobs:
             localport=3389 `
             profile=any
 
-          Set-Service -Name TermService -StartupType Automatic
-          Restart-Service -Name TermService -Force
+          Set-Service `
+            -Name TermService `
+            -StartupType Automatic
+
+          Restart-Service `
+            -Name TermService `
+            -Force
 
           Write-Host "RDP enabled."
+
 
       # ============================================================
       # 2. CREATE RDP USER
@@ -64,6 +72,8 @@ jobs:
         env:
           RDP_PASSWORD: ${{ secrets.RDP_PASSWORD }}
         run: |
+          $ErrorActionPreference = "Stop"
+
           if ([string]::IsNullOrWhiteSpace($env:RDP_PASSWORD)) {
               throw "RDP_PASSWORD GitHub Secret is missing."
           }
@@ -73,17 +83,23 @@ jobs:
             -AsPlainText `
             -Force
 
-          $existing = Get-LocalUser -Name "AndroidRDP" `
+          $existing = Get-LocalUser `
+            -Name "AndroidRDP" `
             -ErrorAction SilentlyContinue
 
-          if ($existing) {
+          if ($null -ne $existing) {
+
+              Write-Host "AndroidRDP already exists."
+
               Set-LocalUser `
                 -Name "AndroidRDP" `
                 -Password $securePassword
 
-              Enable-LocalUser -Name "AndroidRDP"
+              Enable-LocalUser `
+                -Name "AndroidRDP"
           }
           else {
+
               New-LocalUser `
                 -Name "AndroidRDP" `
                 -Password $securePassword `
@@ -107,12 +123,15 @@ jobs:
 
           Write-Host "RDP user ready."
 
+
       # ============================================================
       # 3. INSTALL TAILSCALE
       # ============================================================
       - name: Install Tailscale
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
+
           Write-Host "=== Installing Tailscale ==="
 
           $url = "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi"
@@ -127,7 +146,10 @@ jobs:
             -ArgumentList "/i", "`"$installer`"", "/quiet", "/norestart" `
             -Wait
 
-          Remove-Item $installer -Force
+          Remove-Item `
+            $installer `
+            -Force `
+            -ErrorAction SilentlyContinue
 
           $ts = "$env:ProgramFiles\Tailscale\tailscale.exe"
 
@@ -137,6 +159,7 @@ jobs:
 
           Write-Host "Tailscale installed."
 
+
       # ============================================================
       # 4. CONNECT TAILSCALE
       # ============================================================
@@ -145,35 +168,54 @@ jobs:
         env:
           TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
         run: |
+          $ErrorActionPreference = "Stop"
+
           if ([string]::IsNullOrWhiteSpace($env:TAILSCALE_AUTH_KEY)) {
               throw "TAILSCALE_AUTH_KEY GitHub Secret is missing."
           }
 
           $ts = "$env:ProgramFiles\Tailscale\tailscale.exe"
 
+          Write-Host "Connecting Tailscale..."
+
           & $ts up `
             --authkey="$env:TAILSCALE_AUTH_KEY" `
             --hostname="android29-$env:GITHUB_RUN_ID"
 
-          Start-Sleep -Seconds 5
+          if ($LASTEXITCODE -ne 0) {
+              throw "Tailscale connection failed."
+          }
 
           $ip = $null
 
-          for ($i = 0; $i -lt 20; $i++) {
+          for ($i = 1; $i -le 30; $i++) {
 
-              $ip = (& $ts ip -4 2>$null |
-                Select-Object -First 1).Trim()
+              $result = @(
+                  & $ts ip -4 2>$null
+              )
 
-              if ($ip -match '^\d+\.\d+\.\d+\.\d+$') {
+              $candidate = $result |
+                Where-Object {
+                    $_ -match '^\d+\.\d+\.\d+\.\d+$'
+                } |
+                Select-Object -First 1
+
+              if ($null -ne $candidate) {
+                  $ip = $candidate.ToString().Trim()
                   break
               }
 
-              Write-Host "Waiting for Tailscale IP..."
+              Write-Host "Waiting for Tailscale IP... $i/30"
+
               Start-Sleep -Seconds 3
           }
 
-          if ($ip -notmatch '^\d+\.\d+\.\d+\.\d+$') {
+          if ([string]::IsNullOrWhiteSpace($ip)) {
               throw "Tailscale IPv4 address was not assigned."
+          }
+
+          if ($ip -notmatch '^\d+\.\d+\.\d+\.\d+$') {
+              throw "Invalid Tailscale IP: $ip"
           }
 
           "TAILSCALE_IP=$ip" |
@@ -184,13 +226,16 @@ jobs:
 
           Write-Host "Tailscale IP: $ip"
 
+
       # ============================================================
-      # 5. INSTALL ANDROID SDK COMPONENTS
+      # 5. LOCATE ANDROID SDK
       # ============================================================
-      - name: Install Android 10 API 29
+      - name: Locate Android SDK
         shell: pwsh
         run: |
-          Write-Host "=== Android SDK ==="
+          $ErrorActionPreference = "Stop"
+
+          Write-Host "=== Locating Android SDK ==="
 
           $sdk = $env:ANDROID_SDK_ROOT
 
@@ -198,12 +243,35 @@ jobs:
               $sdk = $env:ANDROID_HOME
           }
 
-          if ([string]::IsNullOrWhiteSpace($sdk)) {
-              $sdk = "C:\Android\android-sdk"
+          $possiblePaths = @()
+
+          if (-not [string]::IsNullOrWhiteSpace($sdk)) {
+              $possiblePaths += $sdk
           }
 
-          $env:ANDROID_SDK_ROOT = $sdk
-          $env:ANDROID_HOME = $sdk
+          $possiblePaths += @(
+              "C:\Android\android-sdk",
+              "$env:LOCALAPPDATA\Android\Sdk",
+              "$env:USERPROFILE\AppData\Local\Android\Sdk"
+          )
+
+          $found = $null
+
+          foreach ($path in $possiblePaths) {
+
+              if (-not [string]::IsNullOrWhiteSpace($path) -and
+                  (Test-Path $path)) {
+
+                  $found = $path
+                  break
+              }
+          }
+
+          if ($null -eq $found) {
+              throw "Android SDK was not found."
+          }
+
+          $sdk = $found
 
           "ANDROID_SDK_ROOT=$sdk" |
             Out-File `
@@ -211,33 +279,50 @@ jobs:
               -Encoding utf8 `
               -Append
 
-          Write-Host "SDK: $sdk"
+          "ANDROID_HOME=$sdk" |
+            Out-File `
+              -FilePath $env:GITHUB_ENV `
+              -Encoding utf8 `
+              -Append
 
-          $sdkmanager = Get-ChildItem `
-            -Path $sdk `
-            -Filter sdkmanager.bat `
+          Write-Host "Android SDK: $sdk"
+
+
+      # ============================================================
+      # 6. INSTALL ANDROID 10 API 29
+      # ============================================================
+      - name: Install Android 10 API 29
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          Write-Host "=== Installing Android 10 / API 29 ==="
+
+          $sdkmanagerItem = Get-ChildItem `
+            -Path $env:ANDROID_SDK_ROOT `
+            -Filter "sdkmanager.bat" `
             -Recurse `
             -ErrorAction SilentlyContinue |
             Select-Object -First 1
 
-          if (-not $sdkmanager) {
+          if ($null -eq $sdkmanagerItem) {
               throw "sdkmanager.bat not found."
           }
 
-          $sdkmanager = $sdkmanager.FullName
+          $sdkmanager = $sdkmanagerItem.FullName
 
-          $avdmanager = Get-ChildItem `
-            -Path $sdk `
-            -Filter avdmanager.bat `
+          $avdmanagerItem = Get-ChildItem `
+            -Path $env:ANDROID_SDK_ROOT `
+            -Filter "avdmanager.bat" `
             -Recurse `
             -ErrorAction SilentlyContinue |
             Select-Object -First 1
 
-          if (-not $avdmanager) {
+          if ($null -eq $avdmanagerItem) {
               throw "avdmanager.bat not found."
           }
 
-          $avdmanager = $avdmanager.FullName
+          $avdmanager = $avdmanagerItem.FullName
 
           "SDKMANAGER=$sdkmanager" |
             Out-File `
@@ -251,10 +336,19 @@ jobs:
               -Encoding utf8 `
               -Append
 
-          & $sdkmanager `
-            "--licenses" `
-            | ForEach-Object { "y" } |
-            & $sdkmanager "--licenses"
+          Write-Host "sdkmanager: $sdkmanager"
+          Write-Host "avdmanager: $avdmanager"
+
+          # Accept licenses safely
+          $licenses = 1..20 | ForEach-Object { "y" }
+
+          $licenses |
+            & $sdkmanager --licenses
+
+          if ($LASTEXITCODE -ne 0) {
+              Write-Host "License command returned exit code $LASTEXITCODE."
+              Write-Host "Continuing with package installation..."
+          }
 
           & $sdkmanager `
             "platform-tools" `
@@ -263,20 +357,23 @@ jobs:
             "system-images;android-29;google_apis;x86_64"
 
           if ($LASTEXITCODE -ne 0) {
-              throw "Android SDK installation failed."
+              throw "Android SDK component installation failed."
           }
 
           Write-Host "Android 10/API 29 installed."
 
+
       # ============================================================
-      # 6. CREATE AVD
+      # 7. CREATE AVD
       # ============================================================
       - name: Create Android 10 AVD
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
+
           Write-Host "=== Creating Android29 AVD ==="
 
-          $avdHome = "$env:USERPROFILE\.android"
+          $avdHome = "$env:USERPROFILE\.android\avd"
 
           New-Item `
             -ItemType Directory `
@@ -284,24 +381,23 @@ jobs:
             -Path $avdHome |
             Out-Null
 
-          $env:ANDROID_AVD_HOME = "$avdHome\avd"
-
-          New-Item `
-            -ItemType Directory `
-            -Force `
-            -Path $env:ANDROID_AVD_HOME |
-            Out-Null
-
-          "ANDROID_AVD_HOME=$env:ANDROID_AVD_HOME" |
+          "ANDROID_AVD_HOME=$avdHome" |
             Out-File `
               -FilePath $env:GITHUB_ENV `
               -Encoding utf8 `
               -Append
 
-          $old = & $env:AVDMANAGER list avd 2>$null
+          $existing = @(
+              & $env:AVDMANAGER list avd 2>$null
+          ) -join "`n"
 
-          if ($old -match "Android29") {
-              & $env:AVDMANAGER delete avd -n Android29
+          if ($existing -match "Name:\s*Android29") {
+
+              Write-Host "Existing Android29 found. Removing it..."
+
+              & $env:AVDMANAGER delete avd `
+                -n Android29 `
+                2>$null
           }
 
           "no" |
@@ -316,101 +412,160 @@ jobs:
           }
 
           Write-Host "=== AVD LIST ==="
+
           & $env:AVDMANAGER list avd
 
+
       # ============================================================
-      # 7. OPTIMIZE AVD
+      # 8. OPTIMIZE AVD
       # ============================================================
       - name: Optimize Android AVD
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
+
           $config = "$env:ANDROID_AVD_HOME\Android29.avd\config.ini"
 
           if (-not (Test-Path $config)) {
               throw "AVD config not found: $config"
           }
 
-          Add-Content $config @"
-          hw.ramSize=2048
-          vm.heapSize=256
-          hw.cpu.ncore=2
-          hw.lcd.width=720
-          hw.lcd.height=1280
-          hw.lcd.density=240
-          hw.gpu.enabled=yes
-          hw.gpu.mode=auto
-          hw.audioInput=no
-          hw.audioOutput=no
-          hw.camera.back=none
-          hw.camera.front=none
-          fastboot.forceColdBoot=yes
-          disk.dataPartition.size=4096M
-          "@
+          Write-Host "Optimizing AVD..."
 
-          Write-Host "AVD optimized."
+          @(
+              "hw.ramSize=2048"
+              "vm.heapSize=256"
+              "hw.cpu.ncore=2"
+              "hw.lcd.width=720"
+              "hw.lcd.height=1280"
+              "hw.lcd.density=240"
+              "hw.gpu.enabled=yes"
+              "hw.gpu.mode=auto"
+              "hw.audioInput=no"
+              "hw.audioOutput=no"
+              "hw.camera.back=none"
+              "hw.camera.front=none"
+              "hw.gps=no"
+              "hw.sensors.proximity=no"
+              "hw.sensors.magnetic_field=no"
+              "hw.sensors.orientation=no"
+              "hw.sensors.accelerometer=no"
+              "hw.sensors.gyroscope=no"
+              "showDeviceFrame=no"
+              "skin.dynamic=no"
+              "disk.dataPartition.size=4096M"
+          ) |
+            Add-Content -Path $config
+
+          Write-Host "AVD optimization completed."
+
 
       # ============================================================
-      # 8. START EMULATOR
+      # 9. START ANDROID EMULATOR
       # ============================================================
       - name: Start Android Emulator
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
+
           Write-Host "=== Starting Android 10 Emulator ==="
 
-          $emulator = Get-ChildItem `
+          $emulatorItem = Get-ChildItem `
             -Path $env:ANDROID_SDK_ROOT `
-            -Filter emulator.exe `
+            -Filter "emulator.exe" `
             -Recurse `
             -ErrorAction SilentlyContinue |
             Select-Object -First 1
 
-          if (-not $emulator) {
+          if ($null -eq $emulatorItem) {
               throw "emulator.exe not found."
           }
 
-          $emulator = $emulator.FullName
+          $emulator = $emulatorItem.FullName
 
           Write-Host "Emulator: $emulator"
 
-          $args = @(
-              "-avd", "Android29",
-              "-gpu", "auto",
-              "-no-boot-anim",
-              "-no-snapshot",
-              "-no-audio",
-              "-camera-back", "none",
-              "-camera-front", "none",
-              "-memory", "2048",
-              "-cores", "2",
-              "-netdelay", "none",
+          # Remove stale emulator processes
+          Get-Process emulator*,qemu* `
+            -ErrorAction SilentlyContinue |
+            Stop-Process `
+              -Force `
+              -ErrorAction SilentlyContinue
+
+          Start-Sleep -Seconds 3
+
+          $arguments = @(
+              "-avd", "Android29"
+              "-gpu", "auto"
+              "-no-snapshot"
+              "-no-boot-anim"
+              "-no-audio"
+              "-camera-back", "none"
+              "-camera-front", "none"
+              "-no-metrics"
+              "-memory", "2048"
+              "-cores", "2"
+              "-netdelay", "none"
               "-netspeed", "full"
           )
 
-          Start-Process `
+          Write-Host "Starting emulator..."
+
+          $process = Start-Process `
             -FilePath $emulator `
-            -ArgumentList $args `
+            -ArgumentList $arguments `
+            -PassThru `
             -WindowStyle Normal
 
-          Write-Host "Emulator process started."
+          if ($null -eq $process) {
+              throw "Failed to start emulator process."
+          }
+
+          "EMULATOR_PID=$($process.Id)" |
+            Out-File `
+              -FilePath $env:GITHUB_ENV `
+              -Encoding utf8 `
+              -Append
+
+          Write-Host "Emulator PID: $($process.Id)"
+
+          Start-Sleep -Seconds 10
+
+          if ($process.HasExited) {
+
+              Write-Host "Emulator exited immediately."
+
+              Get-Process emulator*,qemu* `
+                -ErrorAction SilentlyContinue
+
+              throw "Android emulator stopped immediately."
+          }
+
+          Write-Host "Emulator process is running."
+
 
       # ============================================================
-      # 9. WAIT FOR ADB / BOOT
+      # 10. WAIT FOR ADB / ANDROID BOOT
       # ============================================================
       - name: Wait for Android Boot
         shell: pwsh
         run: |
-          $adb = Get-ChildItem `
+          $ErrorActionPreference = "Stop"
+
+          Write-Host "=== Waiting for Android ==="
+
+          $adbItem = Get-ChildItem `
             -Path $env:ANDROID_SDK_ROOT `
-            -Filter adb.exe `
+            -Filter "adb.exe" `
             -Recurse `
             -ErrorAction SilentlyContinue |
             Select-Object -First 1
 
-          if (-not $adb) {
+          if ($null -eq $adbItem) {
               throw "adb.exe not found."
           }
 
-          $adb = $adb.FullName
+          $adb = $adbItem.FullName
 
           "ADB=$adb" |
             Out-File `
@@ -418,56 +573,157 @@ jobs:
               -Encoding utf8 `
               -Append
 
+          Write-Host "ADB: $adb"
+
+          # --------------------------------------------------------
+          # Start ADB server
+          # --------------------------------------------------------
+
+          & $adb kill-server 2>$null
+
+          Start-Sleep -Seconds 2
+
           & $adb start-server
 
-          $ready = $false
+          if ($LASTEXITCODE -ne 0) {
+              throw "ADB server failed to start."
+          }
+
+          Write-Host "ADB server started."
+
+          # --------------------------------------------------------
+          # Wait for emulator device
+          # --------------------------------------------------------
+
+          $deviceReady = $false
+
+          for ($i = 1; $i -le 150; $i++) {
+
+              $deviceList = @(
+                  & $adb devices 2>$null
+              )
+
+              $foundDevice = $false
+
+              foreach ($line in $deviceList) {
+
+                  $clean = if ($null -eq $line) {
+                      ""
+                  }
+                  else {
+                      $line.ToString().Trim()
+                  }
+
+                  if ($clean -match '^emulator-\d+\s+device\s*$') {
+                      $foundDevice = $true
+                      break
+                  }
+              }
+
+              if ($foundDevice) {
+
+                  Write-Host "Android emulator detected."
+
+                  $deviceReady = $true
+
+                  break
+              }
+
+              Write-Host "Waiting for emulator... $i/150"
+
+              if (($i % 10) -eq 0) {
+
+                  Write-Host "Current ADB devices:"
+
+                  & $adb devices
+              }
+
+              Start-Sleep -Seconds 2
+          }
+
+          if (-not $deviceReady) {
+
+              Write-Host ""
+              Write-Host "========== ADB DEVICES =========="
+
+              & $adb devices
+
+              Write-Host ""
+              Write-Host "========== EMULATOR PROCESSES =========="
+
+              Get-Process emulator*,qemu* `
+                -ErrorAction SilentlyContinue |
+                Select-Object Id,ProcessName,CPU
+
+              Write-Host ""
+              Write-Host "========== ADB VERSION =========="
+
+              & $adb version
+
+              throw "Android emulator did not become available through ADB."
+          }
+
+          # --------------------------------------------------------
+          # Wait for Android boot
+          # --------------------------------------------------------
+
+          $bootCompleted = $false
 
           for ($i = 1; $i -le 120; $i++) {
 
-              $state = (& $adb get-state 2>$null).Trim()
+              $bootOutput = @(
+                  & $adb shell getprop sys.boot_completed 2>$null
+              )
 
-              if ($state -eq "device") {
-                  Write-Host "ADB device detected."
-                  $ready = $true
-                  break
-              }
+              $boot = ($bootOutput -join "").Trim()
 
-              Write-Host "Waiting for emulator... $i/120"
-              Start-Sleep -Seconds 2
-          }
-
-          if (-not $ready) {
-              & $adb devices
-              throw "Android Emulator did not become ready."
-          }
-
-          for ($i = 1; $i -le 90; $i++) {
-
-              $boot = (& $adb shell getprop sys.boot_completed 2>$null).Trim()
+              Write-Host "Android boot status: '$boot' ($i/120)"
 
               if ($boot -eq "1") {
-                  Write-Host "Android boot completed."
+
+                  $bootCompleted = $true
+
                   break
               }
 
-              Write-Host "Waiting for Android boot... $i/90"
-              Start-Sleep -Seconds 2
+              Start-Sleep -Seconds 3
           }
 
-          $boot = (& $adb shell getprop sys.boot_completed).Trim()
+          if (-not $bootCompleted) {
 
-          if ($boot -ne "1") {
-              throw "Android did not finish booting."
+              Write-Host ""
+              Write-Host "Android boot timeout."
+
+              & $adb shell getprop ro.build.version.release
+              & $adb shell getprop ro.build.version.sdk
+
+              throw "Android emulator boot timeout."
           }
+
+          Write-Host ""
+          Write-Host "======================================"
+          Write-Host "ANDROID 10 BOOT COMPLETED"
+          Write-Host "======================================"
+
+          # --------------------------------------------------------
+          # Disable Android animations
+          # --------------------------------------------------------
 
           & $adb shell settings put global window_animation_scale 0
           & $adb shell settings put global transition_animation_scale 0
           & $adb shell settings put global animator_duration_scale 0
 
-          Write-Host "Android 10 ready."
+          Write-Host "Android animations disabled."
+
+          # Verify
+          Write-Host ""
+          Write-Host "ADB devices:"
+
+          & $adb devices
+
 
       # ============================================================
-      # 10. OPTIONAL APK DOWNLOAD + INSTALL
+      # 11. OPTIONAL APK FROM URL
       # ============================================================
       - name: Download and Install APK
         if: ${{ inputs.apk_url != '' }}
@@ -475,9 +731,18 @@ jobs:
         env:
           APK_URL: ${{ inputs.apk_url }}
         run: |
-          Write-Host "=== APK Installation ==="
+          $ErrorActionPreference = "Stop"
+
+          Write-Host "=== APK INSTALLATION ==="
+
+          if ([string]::IsNullOrWhiteSpace($env:APK_URL)) {
+              Write-Host "No APK URL supplied."
+              exit 0
+          }
 
           $apk = "$env:RUNNER_TEMP\app.apk"
+
+          Write-Host "Downloading APK..."
 
           Invoke-WebRequest `
             -Uri $env:APK_URL `
@@ -491,74 +756,143 @@ jobs:
 
           Write-Host "APK size: $size bytes"
 
+          if ($size -lt 1024) {
+              throw "Downloaded file is too small to be a valid APK."
+          }
+
+          Write-Host "Installing APK..."
+
           & $env:ADB install -r -d $apk
 
           if ($LASTEXITCODE -ne 0) {
               throw "APK installation failed."
           }
 
-          Write-Host "APK installed successfully."
+          Write-Host "======================================"
+          Write-Host "APK INSTALLED SUCCESSFULLY"
+          Write-Host "======================================"
+
 
       # ============================================================
-      # 11. VERIFY EMULATOR
+      # 12. VERIFY ANDROID
       # ============================================================
       - name: Verify Android
         shell: pwsh
         run: |
+          Write-Host ""
           Write-Host "=========================================="
           Write-Host "ANDROID INFORMATION"
           Write-Host "=========================================="
 
+          Write-Host "Android version:"
           & $env:ADB shell getprop ro.build.version.release
+
+          Write-Host "API level:"
           & $env:ADB shell getprop ro.build.version.sdk
+
+          Write-Host "CPU ABI:"
           & $env:ADB shell getprop ro.product.cpu.abi
 
-          Write-Host "=========================================="
+          Write-Host "Device:"
+          & $env:ADB shell getprop ro.product.model
+
+          Write-Host ""
+          Write-Host "ADB devices:"
 
           & $env:ADB devices
 
+          Write-Host "=========================================="
+
+
       # ============================================================
-      # 12. SHOW CONNECTION INFORMATION
+      # 13. TEST LOCAL RDP SERVICE
+      # ============================================================
+      - name: Test RDP Service
+        shell: pwsh
+        run: |
+          Write-Host "=== Testing local RDP ==="
+
+          $result = Test-NetConnection `
+            -ComputerName "127.0.0.1" `
+            -Port 3389 `
+            -WarningAction SilentlyContinue
+
+          if ($result.TcpTestSucceeded) {
+              Write-Host "RDP service is listening on port 3389."
+          }
+          else {
+              Write-Warning "RDP port 3389 is not responding locally."
+          }
+
+
+      # ============================================================
+      # 14. SHOW CONNECTION INFORMATION
       # ============================================================
       - name: Show RDP Information
         shell: pwsh
         run: |
           Write-Host ""
-          Write-Host "=============================================="
-          Write-Host "        ANDROID 10 CLOUD RDP READY"
-          Write-Host "=============================================="
+          Write-Host "================================================"
+          Write-Host "       ANDROID 10 CLOUD RDP READY"
+          Write-Host "================================================"
           Write-Host ""
-          Write-Host "RDP Address : $env:TAILSCALE_IP"
-          Write-Host "RDP Port    : 3389"
-          Write-Host "Username    : AndroidRDP"
+          Write-Host "RDP Address:"
+          Write-Host "$env:TAILSCALE_IP"
           Write-Host ""
-          Write-Host "Android     : Android 10"
-          Write-Host "API         : 29"
-          Write-Host "ABI         : x86_64"
-          Write-Host "AVD         : Android29"
+          Write-Host "RDP Port:"
+          Write-Host "3389"
           Write-Host ""
-          Write-Host "Connect using Microsoft Remote Desktop"
-          Write-Host "from your phone."
+          Write-Host "Username:"
+          Write-Host "AndroidRDP"
           Write-Host ""
-          Write-Host "=============================================="
+          Write-Host "Android:"
+          Write-Host "Android 10"
+          Write-Host ""
+          Write-Host "API:"
+          Write-Host "29"
+          Write-Host ""
+          Write-Host "ABI:"
+          Write-Host "x86_64"
+          Write-Host ""
+          Write-Host "AVD:"
+          Write-Host "Android29"
+          Write-Host ""
+          Write-Host "================================================"
+          Write-Host "Connect from your phone using an RDP client."
+          Write-Host "================================================"
+          Write-Host ""
+
 
       # ============================================================
-      # 13. KEEP RUNNER ALIVE
+      # 15. KEEP RUNNER ALIVE
       # ============================================================
       - name: Keep Android RDP Alive
         shell: pwsh
         run: |
-          Write-Host "Android RDP is running."
+          Write-Host ""
+          Write-Host "=============================================="
+          Write-Host "Android 10 RDP is running."
+          Write-Host "=============================================="
 
           while ($true) {
 
-              $state = (& $env:ADB get-state 2>$null).Trim()
+              $stateOutput = @(
+                  & $env:ADB get-state 2>$null
+              )
 
-              if ($state -ne "device") {
-                  Write-Warning "ADB/emulator state: $state"
+              $state = if ($null -eq $stateOutput) {
+                  ""
+              }
+              else {
+                  ($stateOutput -join "").Trim()
               }
 
-              Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] Android 10 RDP ACTIVE"
+              if ($state -ne "device") {
+                  Write-Warning "ADB/emulator state: '$state'"
+              }
+              else {
+                  Write-Host "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] Android 10 RDP ACTIVE"
+              }
 
               Start-Sleep -Seconds 300
           }
