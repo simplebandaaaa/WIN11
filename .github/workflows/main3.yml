@@ -1,12 +1,17 @@
-name: Waydroid Android RDP
+name: Android Waydroid RDP
 
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
-  android:
+  waydroid:
+    name: Ubuntu + Waydroid + APK + RDP
     runs-on: ubuntu-24.04
-    timeout-minutes: 350
+
+    timeout-minutes: 330
 
     env:
       ANDROID_USER: android
@@ -15,21 +20,89 @@ jobs:
 
     steps:
 
-      # ============================================================
-      # CHECKOUT
-      # ============================================================
+      # ==========================================================
+      # 1. CHECKOUT
+      # ==========================================================
 
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      # ============================================================
-      # SYSTEM
-      # ============================================================
+      # ==========================================================
+      # 2. SYSTEM DIAGNOSTICS
+      # ==========================================================
 
-      - name: Install Ubuntu desktop and RDP
+      - name: System diagnostics
         shell: bash
         run: |
-          set -eux
+          set +e
+
+          mkdir -p "$RUNNER_TEMP/waydroid-logs"
+
+          {
+            echo "================ SYSTEM ================"
+            date
+            uname -a
+
+            echo
+            echo "OS:"
+            cat /etc/os-release
+
+            echo
+            echo "CPU:"
+            lscpu
+
+            echo
+            echo "MEMORY:"
+            free -h
+
+            echo
+            echo "DISK:"
+            df -h
+
+            echo
+            echo "ARCH:"
+            uname -m
+
+            echo
+            echo "VIRTUALIZATION:"
+            systemd-detect-virt || true
+
+            echo
+            echo "KVM:"
+            ls -l /dev/kvm 2>/dev/null || true
+
+            echo
+            echo "BINDER DEVICES:"
+            find /dev -maxdepth 3 \
+              \( -iname '*binder*' -o -iname 'binderfs' \) \
+              -print 2>/dev/null
+
+            echo
+            echo "BINDER MOUNTS:"
+            mount | grep -i binder || true
+
+            echo
+            echo "ASHMEM:"
+            ls -l /dev/ashmem 2>/dev/null || true
+
+            echo
+            echo "CGROUP:"
+            mount | grep cgroup || true
+
+            echo
+            echo "WAYLAND:"
+            ls -la /run/user/* 2>/dev/null || true
+
+          } | tee "$RUNNER_TEMP/waydroid-logs/system.txt"
+
+      # ==========================================================
+      # 3. INSTALL DESKTOP + XRDP
+      # ==========================================================
+
+      - name: Install XFCE and XRDP
+        shell: bash
+        run: |
+          set -euxo pipefail
 
           sudo apt-get update
 
@@ -67,19 +140,19 @@ jobs:
           sudo systemctl enable xrdp
           sudo systemctl restart xrdp
 
-      # ============================================================
-      # CREATE RDP USER
-      # ============================================================
+      # ==========================================================
+      # 4. CREATE RDP USER
+      # ==========================================================
 
-      - name: Create Android RDP user
+      - name: Create RDP user
         shell: bash
         env:
           RDP_PASSWORD: ${{ secrets.RDP_PASSWORD }}
         run: |
-          set -eux
+          set -euxo pipefail
 
           if [ -z "$RDP_PASSWORD" ]; then
-            echo "ERROR: RDP_PASSWORD GitHub Secret is missing."
+            echo "::error::RDP_PASSWORD secret is missing."
             exit 1
           fi
 
@@ -97,21 +170,22 @@ jobs:
           USER_UID="$(id -u "$ANDROID_USER")"
           USER_HOME="$(getent passwd "$ANDROID_USER" | cut -d: -f6)"
 
-          sudo mkdir -p "/run/user/$USER_UID"
-          sudo chown "$ANDROID_USER:$ANDROID_USER" "/run/user/$USER_UID"
-          sudo chmod 700 "/run/user/$USER_UID"
-
           echo "USER_UID=$USER_UID" >> "$GITHUB_ENV"
           echo "USER_HOME=$USER_HOME" >> "$GITHUB_ENV"
 
-      # ============================================================
-      # XFCE / XRDP
-      # ============================================================
+          sudo mkdir -p "/run/user/$USER_UID"
+          sudo chown "$ANDROID_USER:$ANDROID_USER" \
+            "/run/user/$USER_UID"
+          sudo chmod 700 "/run/user/$USER_UID"
 
-      - name: Configure XFCE XRDP
+      # ==========================================================
+      # 5. XRDP CONFIG
+      # ==========================================================
+
+      - name: Configure XRDP
         shell: bash
         run: |
-          set -eux
+          set -euxo pipefail
 
           sudo tee /etc/xrdp/startwm.sh >/dev/null <<'EOF'
           #!/bin/sh
@@ -129,95 +203,127 @@ jobs:
 
           sudo chmod +x /etc/xrdp/startwm.sh
 
-          sudo -u "$ANDROID_USER" bash -c 'cat > "$HOME/.xsession" <<EOF
-          startxfce4
-          EOF'
+          sudo -u "$ANDROID_USER" bash -c \
+            'printf "%s\n" "startxfce4" > "$HOME/.xsession"'
 
           sudo chown "$ANDROID_USER:$ANDROID_USER" \
-            "/home/$ANDROID_USER/.xsession"
+            "$USER_HOME/.xsession"
 
           sudo systemctl restart xrdp
 
-          echo "XRDP listening:"
+          echo "XRDP:"
+          sudo systemctl --no-pager status xrdp || true
+
+          echo
+          echo "PORT 3389:"
           sudo ss -lntp | grep ':3389' || true
 
-      # ============================================================
-      # KERNEL CHECK
-      # ============================================================
+      # ==========================================================
+      # 6. WAYDROID KERNEL GATE
+      # ==========================================================
 
-      - name: Check Waydroid kernel requirements
+      - name: Validate Waydroid kernel
         shell: bash
         run: |
           set +e
 
-          echo "============================================================"
-          echo " KERNEL INFORMATION"
-          echo "============================================================"
+          LOG="$RUNNER_TEMP/waydroid-logs/kernel.txt"
 
-          uname -a
+          {
+            echo "================ WAYDROID KERNEL CHECK ================"
+
+            echo
+            echo "Kernel:"
+            uname -a
+
+            echo
+            echo "Architecture:"
+            uname -m
+
+            echo
+            echo "Binder:"
+            find /dev -maxdepth 3 \
+              \( -iname '*binder*' -o -iname 'binderfs' \) \
+              -print 2>/dev/null
+
+            echo
+            echo "Binder mount:"
+            mount | grep -i binder || true
+
+            echo
+            echo "Ashmem:"
+            ls -l /dev/ashmem 2>/dev/null || true
+
+            echo
+            echo "KVM:"
+            ls -l /dev/kvm 2>/dev/null || true
+
+            echo
+            echo "Kernel modules:"
+            lsmod | grep -Ei 'binder|ashmem|vhost' || true
+
+          } | tee "$LOG"
+
+          BINDER=0
+
+          if [ -e /dev/binder ]; then
+            BINDER=1
+          fi
+
+          if [ -e /dev/binderfs ]; then
+            BINDER=1
+          fi
+
+          if mount | grep -qi binder; then
+            BINDER=1
+          fi
+
+          if [ "$BINDER" -eq 0 ]; then
+            echo
+            echo "::warning::Binder support was not detected."
+
+            echo
+            echo "This GitHub-hosted runner may not be suitable"
+            echo "for Waydroid."
+
+            echo
+            echo "The complete diagnostic is in:"
+            echo "$LOG"
+
+            # Do NOT continue pretending Android is available.
+            exit 1
+          fi
 
           echo
-          echo "Architecture:"
-          uname -m
+          echo "Binder support detected."
 
-          echo
-          echo "Binder devices:"
-          find /dev -maxdepth 3 \
-            \( -iname '*binder*' -o -iname 'binderfs' \) \
-            -print 2>/dev/null
-
-          echo
-          echo "Binder mounts:"
-          mount | grep -i binder || true
-
-          echo
-          echo "Ashmem:"
-          ls -la /dev/ashmem 2>/dev/null || true
-
-          echo
-          echo "KVM:"
-          ls -la /dev/kvm 2>/dev/null || true
-
-          echo
-          echo "Wayland:"
-          command -v weston || true
-          command -v wayland-info || true
-
-      # ============================================================
-      # INSTALL WAYDROID
-      # ============================================================
+      # ==========================================================
+      # 7. INSTALL WAYDROID
+      # ==========================================================
 
       - name: Install Waydroid
         shell: bash
         run: |
-          set -eux
+          set -euxo pipefail
 
-          if ! command -v waydroid >/dev/null 2>&1; then
+          curl -fsSL https://repo.waydro.id | sudo bash
 
-            curl -fsSL https://repo.waydro.id | \
-              sudo bash
+          sudo apt-get update
 
-            sudo apt-get update
-
-            sudo DEBIAN_FRONTEND=noninteractive \
-              apt-get install -y waydroid
-
-          else
-            echo "Waydroid already installed."
-          fi
+          sudo DEBIAN_FRONTEND=noninteractive \
+            apt-get install -y waydroid
 
           echo
-          echo "Waydroid version:"
           waydroid --version
 
-      # ============================================================
-      # WAYDROID INIT
-      # ============================================================
+      # ==========================================================
+      # 8. INITIALIZE WAYDROID
+      # ==========================================================
 
       - name: Initialize Waydroid
         shell: bash
         run: |
-          set -eux
+          set -euxo pipefail
 
           if [ ! -d /var/lib/waydroid/images ]; then
             sudo waydroid init
@@ -225,9 +331,13 @@ jobs:
             echo "Waydroid images already exist."
           fi
 
-      # ============================================================
-      # WAYDROID PROPERTIES
-      # ============================================================
+          echo
+          echo "Waydroid directory:"
+          sudo du -sh /var/lib/waydroid 2>/dev/null || true
+
+      # ==========================================================
+      # 9. WAYDROID PROPERTIES
+      # ==========================================================
 
       - name: Configure Waydroid
         shell: bash
@@ -243,107 +353,150 @@ jobs:
           sudo waydroid prop set \
             persist.waydroid.height "$WAYDROID_HEIGHT"
 
-          echo "Waydroid properties configured."
+          sudo waydroid prop set \
+            persist.waydroid.suspend false
 
-      # ============================================================
-      # CONTAINER
-      # ============================================================
+          sudo waydroid prop set \
+            persist.waydroid.udev false
+
+          echo "Properties configured."
+
+      # ==========================================================
+      # 10. START CONTAINER
+      # ==========================================================
 
       - name: Start Waydroid container
         shell: bash
         run: |
-          set -eux
+          set -euo pipefail
 
           sudo waydroid container start
 
           sleep 10
 
           echo
-          echo "Container status:"
-          sudo waydroid status || true
+          sudo waydroid status
 
-      # ============================================================
-      # WESTON WAYLAND COMPOSITOR
-      # ============================================================
+      # ==========================================================
+      # 11. PREPARE USER SESSION
+      # ==========================================================
 
-      - name: Start Wayland compositor
+      - name: Prepare Wayland user session
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          sudo mkdir -p "/run/user/$USER_UID"
+
+          sudo chown \
+            "$ANDROID_USER:$ANDROID_USER" \
+            "/run/user/$USER_UID"
+
+          sudo chmod 700 \
+            "/run/user/$USER_UID"
+
+          sudo -u "$ANDROID_USER" \
+            dbus-run-session \
+            -- bash -c '
+              echo "D-Bus user session test OK"
+            '
+
+      # ==========================================================
+      # 12. START WESTON
+      # ==========================================================
+
+      - name: Start headless Wayland compositor
         shell: bash
         run: |
           set +e
 
-          export XDG_RUNTIME_DIR="/run/user/$USER_UID"
-
-          sudo mkdir -p "$XDG_RUNTIME_DIR"
-          sudo chown "$ANDROID_USER:$ANDROID_USER" "$XDG_RUNTIME_DIR"
-          sudo chmod 700 "$XDG_RUNTIME_DIR"
+          LOG="$RUNNER_TEMP/waydroid-logs/weston.txt"
 
           sudo -u "$ANDROID_USER" \
             env \
             HOME="$USER_HOME" \
             USER="$ANDROID_USER" \
             LOGNAME="$ANDROID_USER" \
-            XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" \
+            XDG_RUNTIME_DIR="/run/user/$USER_UID" \
             WAYLAND_DISPLAY=wayland-0 \
             weston \
-              --backend=x11-backend.so \
+              --backend=headless-backend.so \
               --socket=wayland-0 \
               --width="$WAYDROID_WIDTH" \
               --height="$WAYDROID_HEIGHT" \
-              > /tmp/weston.log 2>&1 &
+              > "$LOG" 2>&1 &
 
           WESTON_PID=$!
 
           echo "WESTON_PID=$WESTON_PID" >> "$GITHUB_ENV"
 
-          sleep 8
+          echo "Weston PID: $WESTON_PID"
 
-          echo "Weston log:"
-          cat /tmp/weston.log || true
+          for i in $(seq 1 30); do
+            sleep 1
+
+            if [ -S "/run/user/$USER_UID/wayland-0" ]; then
+              echo "Wayland socket is ready."
+              break
+            fi
+
+            if ! kill -0 "$WESTON_PID" 2>/dev/null; then
+              echo "::error::Weston exited unexpectedly."
+              cat "$LOG"
+              exit 1
+            fi
+          done
+
+          if [ ! -S "/run/user/$USER_UID/wayland-0" ]; then
+            echo "::error::Wayland socket was not created."
+            cat "$LOG"
+            exit 1
+          fi
 
           echo
           echo "Wayland socket:"
-          ls -la "$XDG_RUNTIME_DIR" || true
+          ls -la "/run/user/$USER_UID/"
 
-      # ============================================================
-      # WAYDROID SESSION
-      # ============================================================
+      # ==========================================================
+      # 13. START WAYDROID SESSION
+      # ==========================================================
 
-      - name: Start Waydroid Android session
+      - name: Start Waydroid session
         shell: bash
         run: |
           set +e
 
-          export XDG_RUNTIME_DIR="/run/user/$USER_UID"
+          LOG="$RUNNER_TEMP/waydroid-logs/session.txt"
 
           sudo -u "$ANDROID_USER" \
             env \
             HOME="$USER_HOME" \
             USER="$ANDROID_USER" \
             LOGNAME="$ANDROID_USER" \
-            XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" \
+            XDG_RUNTIME_DIR="/run/user/$USER_UID" \
             XDG_SESSION_TYPE=wayland \
             XDG_CURRENT_DESKTOP=Wayland \
             WAYLAND_DISPLAY=wayland-0 \
-            bash -c '
-              waydroid session start
-            ' > /tmp/waydroid-session.log 2>&1 &
+            dbus-run-session \
+            waydroid session start \
+            > "$LOG" 2>&1 &
 
           SESSION_PID=$!
 
-          echo "WAYDROID_SESSION_PID=$SESSION_PID" >> "$GITHUB_ENV"
+          echo "WAYDROID_SESSION_PID=$SESSION_PID" \
+            >> "$GITHUB_ENV"
 
-          echo "Waiting for Android session..."
+          echo "Session PID: $SESSION_PID"
 
           READY=0
 
-          for i in $(seq 1 60); do
+          for i in $(seq 1 90); do
 
             sleep 2
 
-            echo "---- check $i/60 ----"
+            STATUS="$(sudo waydroid status 2>&1)"
 
-            STATUS="$(sudo waydroid status 2>&1 || true)"
-
+            echo "[$i/90]"
             echo "$STATUS"
 
             if echo "$STATUS" | grep -qi \
@@ -354,63 +507,41 @@ jobs:
 
             fi
 
+            if ! kill -0 "$SESSION_PID" 2>/dev/null; then
+              echo "::error::Waydroid session process exited."
+              break
+            fi
+
           done
 
           echo
-          echo "============================================================"
-          echo " WAYDROID STATUS"
-          echo "============================================================"
-
-          sudo waydroid status || true
+          echo "================ SESSION LOG ================"
+          cat "$LOG" || true
 
           echo
-          echo "Session log:"
-          tail -150 /tmp/waydroid-session.log || true
+          echo "================ WAYDROID STATUS ================"
+          sudo waydroid status || true
 
           if [ "$READY" -ne 1 ]; then
 
             echo
-            echo "============================================================"
-            echo " WAYDROID FAILED TO START"
-            echo "============================================================"
-
-            echo
-            echo "Possible causes:"
-            echo "- Binder support unavailable"
-            echo "- Wayland unavailable"
-            echo "- GitHub VM kernel limitation"
-            echo "- Container startup failure"
-            echo "- Unsupported runner environment"
-
-            echo
-            echo "Kernel:"
-            uname -a
-
-            echo
-            echo "Binder:"
-            find /dev -maxdepth 3 \
-              -iname '*binder*' \
-              -print 2>/dev/null || true
+            echo "::error::Waydroid Android session did not become RUNNING."
 
             echo
             echo "Waydroid log:"
-            sudo waydroid log -n 200 || true
-
-            echo
-            echo "Weston log:"
-            cat /tmp/weston.log || true
+            sudo waydroid log -n 250 || true
 
             exit 1
           fi
 
-      # ============================================================
-      # APK DETECTION
-      # ============================================================
+      # ==========================================================
+      # 14. FIND APK
+      # ==========================================================
 
       - name: Find APK
         shell: bash
         run: |
-          set -eux
+          set -euo pipefail
 
           APK="$(find "$GITHUB_WORKSPACE" \
             -type f \
@@ -419,33 +550,35 @@ jobs:
             | head -n 1 || true)"
 
           if [ -z "$APK" ]; then
-            echo "No APK found."
-            echo "Put an APK anywhere in the repository."
-            echo "Example: app.apk"
+            echo "::error::No APK found in repository."
+            echo
+            echo "Put an APK in the repository, for example:"
+            echo "app.apk"
             exit 1
           fi
 
           echo "APK_PATH=$APK" >> "$GITHUB_ENV"
 
           echo
-          echo "APK found:"
+          echo "APK:"
           echo "$APK"
 
           echo
-          echo "APK information:"
           file "$APK" || true
 
-      # ============================================================
-      # APK INSTALL
-      # ============================================================
+          echo
+          ls -lh "$APK"
+
+      # ==========================================================
+      # 15. INSTALL APK
+      # ==========================================================
 
       - name: Install APK
         shell: bash
         run: |
-          set -eux
+          set +e
 
-          echo "Installing:"
-          echo "$APK_PATH"
+          LOG="$RUNNER_TEMP/waydroid-logs/apk-install.txt"
 
           sudo chown \
             "$ANDROID_USER:$ANDROID_USER" \
@@ -457,136 +590,166 @@ jobs:
             USER="$ANDROID_USER" \
             XDG_RUNTIME_DIR="/run/user/$USER_UID" \
             WAYLAND_DISPLAY=wayland-0 \
-            waydroid app install "$APK_PATH"
+            waydroid app install "$APK_PATH" \
+            > "$LOG" 2>&1
+
+          RESULT=$?
+
+          cat "$LOG"
+
+          if [ "$RESULT" -ne 0 ]; then
+            echo
+            echo "::error::APK installation failed."
+            echo
+            echo "Possible causes:"
+            echo "- APK architecture incompatible"
+            echo "- APK requires unsupported Android features"
+            echo "- Android session is not ready"
+            echo "- APK is split/APKS/XAPK rather than a normal APK"
+
+            sudo waydroid log -n 200 || true
+
+            exit "$RESULT"
+          fi
 
           echo
-          echo "Installed applications:"
+          echo "APK installed successfully."
 
-          sudo -u "$ANDROID_USER" \
-            env \
-            HOME="$USER_HOME" \
-            XDG_RUNTIME_DIR="/run/user/$USER_UID" \
-            waydroid app list
+      # ==========================================================
+      # 16. ANDROID PACKAGE CHECK
+      # ==========================================================
 
-      # ============================================================
-      # ANDROID CHECK
-      # ============================================================
-
-      - name: Check Android packages
+      - name: Verify Android
         shell: bash
         run: |
-          set +e
+          set -euo pipefail
 
-          echo "Android package list:"
-
-          sudo waydroid shell \
-            pm list packages | head -200
-
-          echo
           echo "Waydroid status:"
-
           sudo waydroid status
 
-      # ============================================================
-      # TAILSCALE
-      # ============================================================
+          echo
+          echo "Android packages:"
+          sudo waydroid shell \
+            pm list packages \
+            | head -200
 
-      - name: Install and connect Tailscale
+      # ==========================================================
+      # 17. TAILSCALE
+      # ==========================================================
+
+      - name: Install Tailscale
         if: ${{ secrets.TAILSCALE_AUTHKEY != '' }}
         shell: bash
-        env:
-          TS_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
         run: |
-          set -eux
+          set -euxo pipefail
 
           curl -fsSL \
-            https://tailscale.com/install.sh | \
-            sh
+            https://tailscale.com/install.sh \
+            | sudo bash
+
+      - name: Connect Tailscale
+        if: ${{ secrets.TAILSCALE_AUTHKEY != '' }}
+        env:
+          TS_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
+        shell: bash
+        run: |
+          set -euxo pipefail
 
           sudo tailscale up \
             --authkey="$TS_AUTHKEY" \
-            --hostname="github-waydroid-${GITHUB_RUN_ID}"
+            --hostname="waydroid-${GITHUB_RUN_ID}"
 
           echo
-          echo "============================================================"
-          echo " TAILSCALE"
-          echo "============================================================"
+          echo "================ TAILSCALE ================"
 
-          echo "IPv4:"
-          tailscale ip -4 || true
+          tailscale ip -4
+          tailscale status
 
-          echo
-          echo "Status:"
-          tailscale status || true
+      # ==========================================================
+      # 18. FINAL DIAGNOSTICS
+      # ==========================================================
 
-      # ============================================================
-      # FINAL INFORMATION
-      # ============================================================
+      - name: Final status
+        shell: bash
+        run: |
+          set +e
 
-      - name: Show connection information
+          {
+            echo "================ FINAL STATUS ================"
+
+            echo
+            echo "XRDP:"
+            sudo systemctl status xrdp --no-pager
+
+            echo
+            echo "RDP PORT:"
+            sudo ss -lntp | grep ':3389' || true
+
+            echo
+            echo "WAYDROID:"
+            sudo waydroid status
+
+            echo
+            echo "TAILSCALE:"
+            tailscale ip -4 2>/dev/null || true
+
+            echo
+            echo "ANDROID PACKAGES:"
+            sudo waydroid shell pm list packages | head -100
+
+          } | tee "$RUNNER_TEMP/waydroid-logs/final.txt"
+
+      # ==========================================================
+      # 19. UPLOAD ALL LOGS
+      # ==========================================================
+
+      - name: Upload Waydroid logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: waydroid-debug-logs-${{ github.run_id }}
+          path: ${{ runner.temp }}/waydroid-logs/
+          if-no-files-found: warn
+          retention-days: 7
+
+      # ==========================================================
+      # 20. KEEP RUNNER ALIVE
+      # ==========================================================
+
+      - name: Keep RDP alive
+        if: success()
         shell: bash
         run: |
           set +e
 
           echo
           echo "============================================================"
-          echo "             ANDROID RDP INFORMATION"
+          echo "              WAYDROID RDP IS RUNNING"
           echo "============================================================"
 
           echo
-          echo "RDP username:"
-          echo "$ANDROID_USER"
+          echo "Username:"
+          echo "android"
 
           echo
-          echo "RDP port:"
+          echo "Port:"
           echo "3389"
 
           echo
-          echo "Tailscale IPv4:"
+          echo "Tailscale IP:"
           tailscale ip -4 2>/dev/null || \
             echo "Tailscale not configured."
 
           echo
-          echo "XRDP:"
-          sudo systemctl status xrdp --no-pager || true
-
+          echo "Connect from your phone using an RDP client."
           echo
-          echo "Waydroid:"
-          sudo waydroid status || true
-
-          echo
-          echo "============================================================"
-
-      # ============================================================
-      # KEEP ALIVE
-      # ============================================================
-
-      - name: Keep Android RDP alive
-        shell: bash
-        run: |
-          set +e
-
-          echo
-          echo "============================================================"
-          echo "              SESSION IS RUNNING"
-          echo "============================================================"
-
-          echo
-          echo "Connect using:"
-          echo
-          echo "RDP address = Tailscale IPv4"
-          echo "RDP port    = 3389"
-          echo "Username    = android"
-          echo "Password    = RDP_PASSWORD secret"
-          echo
-
-          echo "The GitHub runner will remain alive until the job timeout."
+          echo "The runner will stay alive until the workflow timeout."
 
           while true; do
             sleep 60
 
             echo
-            echo "----- heartbeat $(date) -----"
+            echo "===== HEARTBEAT $(date) ====="
 
             sudo waydroid status || true
 
