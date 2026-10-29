@@ -1,5 +1,4 @@
-
-name: RDP
+name: RDP PUBLIC
 
 on:
   workflow_dispatch:
